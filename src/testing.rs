@@ -148,10 +148,10 @@ impl Host {
         let command = command.into();
         self.commands.push(command.clone());
         match command {
-            Command::Open { descriptor } => {
-                validate_name(&self.registry, descriptor.name())?;
+            Command::Open { request } => {
+                validate_name(&self.registry, request.name())?;
                 let id = self.registry.reserve_id();
-                let state = fake_state_from_descriptor(id, &descriptor);
+                let state = fake_state_from_descriptor(id, &request);
                 self.registry.insert(Instance::new(id, state.clone()));
                 self.events.push(Event::Created(state));
             }

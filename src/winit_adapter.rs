@@ -362,18 +362,18 @@ impl<H: Handler> WinitRunner<H> {
         command: Command,
     ) -> Result<()> {
         match command {
-            Command::Open { descriptor } => {
-                validate_name(&self.registry, descriptor.name())?;
+            Command::Open { request } => {
+                validate_name(&self.registry, request.name())?;
                 #[cfg(feature = "accessibility")]
-                let requested_visible = descriptor.visible();
+                let requested_visible = request.visible();
                 #[cfg(feature = "accessibility")]
                 let native_descriptor = {
-                    let mut native_descriptor = descriptor.clone();
+                    let mut native_descriptor = request.clone();
                     native_descriptor.set_visible(false);
                     native_descriptor
                 };
                 #[cfg(not(feature = "accessibility"))]
-                let native_descriptor = descriptor.clone();
+                let native_descriptor = request.clone();
                 let window = Arc::new(
                     event_loop
                         .create_window(native_descriptor.to_winit_attributes()?)
@@ -384,7 +384,7 @@ impl<H: Handler> WinitRunner<H> {
                 );
                 let id = self.registry.reserve_id();
                 let handle = Handle::from_winit(window.clone());
-                let state = state_from_winit(id, &descriptor, &window);
+                let state = state_from_winit(id, &request, &window);
                 self.windows.insert(window.id(), id);
                 self.registry
                     .insert(Instance::with_handle(id, state.clone(), handle));

@@ -1,5 +1,5 @@
 use super::{Error, ErrorCode, Id, Insets, PhysicalPoint, PhysicalSize, Point, Result, Size};
-use crate::RoleKind;
+use crate::{FullscreenMode, RoleKind};
 
 /// Native fullscreen intent.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -8,6 +8,17 @@ pub enum Fullscreen {
     None,
     Borderless,
     Exclusive,
+}
+
+impl Fullscreen {
+    #[must_use]
+    pub const fn mode(&self) -> FullscreenMode {
+        match self {
+            Self::None => FullscreenMode::None,
+            Self::Borderless => FullscreenMode::Borderless,
+            Self::Exclusive => FullscreenMode::Exclusive,
+        }
+    }
 }
 
 /// Native window stacking intent.

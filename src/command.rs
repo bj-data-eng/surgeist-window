@@ -1,5 +1,6 @@
 use super::{
-    Controls, Cursor, CursorGrab, Descriptor, Fullscreen, Id, ImeRequest, Level, Point, Size, Theme,
+    Controls, Cursor, CursorGrab, Fullscreen, Id, ImeRequest, Level, Point, Size, Theme,
+    WindowRequest,
 };
 use std::time::Instant;
 
@@ -18,7 +19,7 @@ pub enum Action {
 /// Native window command consumed by this crate.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
-    Open { descriptor: Descriptor },
+    Open { request: WindowRequest },
     SetTitle { id: Id, title: String },
     SetPosition { id: Id, position: Point },
     SetVisible { id: Id, visible: bool },

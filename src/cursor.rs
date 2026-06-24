@@ -1,10 +1,21 @@
-use super::CursorIcon;
+use super::{CursorCapability, CursorIcon};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Cursor {
     Icon(CursorIcon),
     Hidden,
     Custom(CustomCursorId),
+}
+
+impl Cursor {
+    #[must_use]
+    pub const fn capability(&self) -> CursorCapability {
+        match self {
+            Self::Icon(_) => CursorCapability::Icon,
+            Self::Hidden => CursorCapability::Hidden,
+            Self::Custom(_) => CursorCapability::Custom,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

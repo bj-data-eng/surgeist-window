@@ -292,7 +292,7 @@ impl Open {
     #[must_use]
     pub fn into_command(self) -> Command {
         Command::Open {
-            descriptor: self.into_descriptor(),
+            request: self.into_descriptor(),
         }
     }
 }

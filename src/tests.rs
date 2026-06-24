@@ -494,6 +494,80 @@ fn host_capabilities_explain_rejections_with_stable_codes() {
 }
 
 #[test]
+fn host_command_plan_rejects_unsupported_dialog_role_before_host_application() {
+    let capabilities = HostCapabilities::winit_default();
+    let request = WindowRequest::builder("dialog")
+        .title("Dialog")
+        .dialog(Id::from_u64(1))
+        .build();
+    let command = Command::Open { request };
+
+    let error = HostCommandPlan::from_command(command, &capabilities)
+        .expect_err("dialog role is not supported by current host capabilities");
+
+    assert_eq!(error.code, ErrorCode::UnsupportedFeature);
+}
+
+#[test]
+fn host_command_plan_rejects_exclusive_fullscreen_open_before_host_application() {
+    let capabilities = HostCapabilities::winit_default();
+    let request = WindowRequest::builder("exclusive")
+        .fullscreen(Fullscreen::Exclusive)
+        .build();
+    let command = Command::Open { request };
+
+    let error = HostCommandPlan::from_command(command, &capabilities)
+        .expect_err("exclusive fullscreen opens are not supported by current host capabilities");
+
+    assert_eq!(error.code, ErrorCode::UnsupportedFeature);
+}
+
+#[test]
+fn host_command_plan_rejects_exclusive_fullscreen_command_before_host_application() {
+    let capabilities = HostCapabilities::winit_default();
+    let command = Command::SetFullscreen {
+        id: Id::from_u64(1),
+        fullscreen: Fullscreen::Exclusive,
+    };
+
+    let error = HostCommandPlan::from_command(command, &capabilities)
+        .expect_err("exclusive fullscreen commands are not supported by current host capabilities");
+
+    assert_eq!(error.code, ErrorCode::UnsupportedFeature);
+}
+
+#[test]
+fn host_command_plan_rejects_custom_cursor_before_host_application() {
+    let capabilities = HostCapabilities::winit_default();
+    let command = Command::SetCursor {
+        id: Id::from_u64(1),
+        cursor: Cursor::Custom(CustomCursorId::from_u64(9)),
+    };
+
+    let error = HostCommandPlan::from_command(command, &capabilities)
+        .expect_err("custom cursors are not supported by current host capabilities");
+
+    assert_eq!(error.code, ErrorCode::UnsupportedFeature);
+}
+
+#[test]
+fn host_command_plan_keeps_supported_commands_as_normalized_host_commands() {
+    let capabilities = HostCapabilities::winit_default();
+    let command = Command::SetTitle {
+        id: Id::from_u64(1),
+        title: String::from("Renamed"),
+    };
+
+    let plan = HostCommandPlan::from_command(command, &capabilities).unwrap();
+
+    assert!(matches!(
+        plan.command(),
+        HostCommand::SetTitle { id, title }
+            if *id == Id::from_u64(1) && title == "Renamed"
+    ));
+}
+
+#[test]
 fn modifier_state_converts_from_winit() {
     let modifiers = winit::keyboard::ModifiersState::SHIFT
         | winit::keyboard::ModifiersState::CONTROL
@@ -589,7 +663,7 @@ fn ime_event_converts_from_winit() {
 fn fake_host_applies_open_and_state_commands() {
     let mut host = testing::Host::new();
     host.apply(Command::Open {
-        descriptor: WindowRequest::builder("fake")
+        request: WindowRequest::builder("fake")
             .title("Fake")
             .position(Point { x: 11.0, y: 22.0 })
             .inner_size(Size {
@@ -647,7 +721,7 @@ fn fake_host_applies_open_and_state_commands() {
 fn fake_host_exercises_draw_and_close_contract() {
     let mut host = testing::Host::new();
     host.apply(Command::Open {
-        descriptor: Descriptor::default(),
+        request: Descriptor::default(),
     })
     .unwrap();
     let id = match &host.events()[0] {
@@ -719,7 +793,7 @@ fn window_modeling_baseline_fake_host_destroy_removes_window_cursor_and_records_
 fn fake_host_deduplicates_cursor_updates() {
     let mut host = testing::Host::new();
     host.apply(Command::Open {
-        descriptor: Descriptor::default(),
+        request: Descriptor::default(),
     })
     .unwrap();
     let id = match &host.events()[0] {
@@ -756,7 +830,7 @@ fn fake_host_deduplicates_cursor_updates() {
 fn fake_host_records_ime_request_order() {
     let mut host = testing::Host::new();
     host.apply(Command::Open {
-        descriptor: Descriptor::default(),
+        request: Descriptor::default(),
     })
     .unwrap();
     let id = match &host.events()[0] {
@@ -806,7 +880,7 @@ fn fake_host_records_ime_request_order() {
 fn fake_host_emits_lifecycle_events() {
     let mut host = testing::Host::new();
     host.apply(Command::Open {
-        descriptor: Descriptor::default(),
+        request: Descriptor::default(),
     })
     .unwrap();
     let id = match &host.events()[0] {
@@ -828,7 +902,7 @@ fn fake_host_emits_lifecycle_events() {
 fn fake_host_forwards_accessibility_events() {
     let mut host = testing::Host::new();
     host.apply(Command::Open {
-        descriptor: Descriptor::default(),
+        request: Descriptor::default(),
     })
     .unwrap();
     let id = match &host.events()[0] {
@@ -947,7 +1021,12 @@ fn dsl_open_builder_lowers_to_descriptor_and_command() {
         }
     );
 
-    assert_eq!(Command::from(open), Command::Open { descriptor });
+    assert_eq!(
+        Command::from(open),
+        Command::Open {
+            request: descriptor
+        }
+    );
 }
 
 #[test]
@@ -1235,11 +1314,11 @@ fn dsl_app_queues_startup_open_commands() {
     assert_eq!(window_loop.startup.len(), 2);
     assert!(matches!(
         &window_loop.startup[0],
-        Command::Open { descriptor } if descriptor.name() == Some("main")
+        Command::Open { request } if request.name() == Some("main")
     ));
     assert!(matches!(
         &window_loop.startup[1],
-        Command::Open { descriptor } if descriptor.name() == Some("tools")
+        Command::Open { request } if request.name() == Some("tools")
     ));
 }
 
@@ -1258,11 +1337,11 @@ fn dsl_startup_commands_are_inserted_once_before_first_resume_callback() {
     assert_eq!(runner.commands.len(), 2);
     assert!(matches!(
         &runner.commands[0],
-        Command::Open { descriptor } if descriptor.name() == Some("main")
+        Command::Open { request } if request.name() == Some("main")
     ));
     assert!(matches!(
         &runner.commands[1],
-        Command::Open { descriptor } if descriptor.name() == Some("tools")
+        Command::Open { request } if request.name() == Some("tools")
     ));
 }
 
