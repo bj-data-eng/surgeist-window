@@ -1,6 +1,7 @@
 use super::{
     Command, Controls, Cursor, CursorGrab, Error, ErrorCode, EventKind, Fullscreen,
-    HostCapabilities, Id, ImeRequest, Level, Metrics, Point, Size, Theme, WindowRequest,
+    HostCapabilities, Id, ImeRequest, InputEvent, Level, Metrics, ModifierState, PhysicalPoint,
+    Point, PointerDeviceData, PointerEvent, PointerKind, PointerPhase, Size, Theme, WindowRequest,
     WindowSnapshot,
 };
 
@@ -126,6 +127,102 @@ pub enum WindowStatePatch {
 pub enum MetricsEvent {
     Resized,
     ScaleFactorChanged,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeEventTransition {
+    patch: Option<WindowStatePatch>,
+    event: Option<EventKind>,
+}
+
+impl NativeEventTransition {
+    #[must_use]
+    pub const fn new(patch: Option<WindowStatePatch>, event: Option<EventKind>) -> Self {
+        Self { patch, event }
+    }
+
+    #[must_use]
+    pub fn focused(id: Id, focused: bool) -> Self {
+        let patch = WindowStatePatch::Focused { id, focused };
+        let event = EventKind::Focused { id, focused };
+        Self::new(Some(patch), Some(event))
+    }
+
+    #[must_use]
+    pub fn moved(id: Id, position: Point) -> Self {
+        let patch = WindowStatePatch::Position { id, position };
+        let event = EventKind::Moved { id, position };
+        Self::new(Some(patch), Some(event))
+    }
+
+    #[must_use]
+    pub fn theme_changed(id: Id, theme: Option<Theme>) -> Self {
+        let patch = WindowStatePatch::Theme { id, theme };
+        let event = EventKind::ThemeChanged { id, theme };
+        Self::new(Some(patch), Some(event))
+    }
+
+    #[must_use]
+    pub fn occluded(id: Id, occluded: bool) -> Self {
+        let patch = WindowStatePatch::Occluded { id, occluded };
+        let event = EventKind::Occluded { id, occluded };
+        Self::new(Some(patch), Some(event))
+    }
+
+    #[must_use]
+    pub fn resized(metrics: Metrics) -> Self {
+        let event = EventKind::Resized(metrics.clone());
+        let patch = WindowStatePatch::metrics(metrics, MetricsEvent::Resized);
+        Self::new(Some(patch), Some(event))
+    }
+
+    #[must_use]
+    pub fn scale_factor_changed(metrics: Metrics) -> Self {
+        let event = EventKind::ScaleFactorChanged(metrics.clone());
+        let patch = WindowStatePatch::metrics(metrics, MetricsEvent::ScaleFactorChanged);
+        Self::new(Some(patch), Some(event))
+    }
+
+    #[must_use]
+    pub fn mouse_moved(
+        id: Id,
+        position: Point,
+        physical_position: PhysicalPoint,
+        delta: Option<Point>,
+        modifiers: ModifierState,
+    ) -> Self {
+        Self::new(
+            None,
+            Some(EventKind::Input(InputEvent::Pointer(PointerEvent {
+                id,
+                phase: PointerPhase::Moved,
+                kind: PointerKind::Mouse,
+                pointer_id: None,
+                position: Some(position),
+                physical_position: Some(physical_position),
+                delta,
+                button: None,
+                modifiers,
+                device: PointerDeviceData::default(),
+                timestamp: None,
+            }))),
+        )
+    }
+
+    #[must_use]
+    pub fn patch(&self) -> Option<&WindowStatePatch> {
+        self.patch.as_ref()
+    }
+
+    #[must_use]
+    pub fn event(&self) -> Option<&EventKind> {
+        self.event.as_ref()
+    }
+
+    #[must_use]
+    pub fn into_event(self) -> Option<EventKind> {
+        self.event
+    }
 }
 
 impl WindowStatePatch {

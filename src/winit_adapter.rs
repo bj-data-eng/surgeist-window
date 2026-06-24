@@ -31,6 +31,12 @@ pub(crate) struct WinitRunner<H> {
     startup_applied: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeTransitionRoute {
+    Event,
+    Input,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct PointerPositionKey {
     window: Id,
@@ -312,6 +318,30 @@ impl<H: Handler> WinitRunner<H> {
         event: EventKind,
     ) {
         debug_assert_eq!(event.id(), id);
+    }
+
+    fn apply_native_transition(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        id: Id,
+        transition: NativeEventTransition,
+    ) {
+        if let Some(patch) = transition.patch().cloned()
+            && let Some(instance) = self.registry.get_mut(id)
+        {
+            let _ = patch.apply(instance.state_mut());
+        }
+        if let Some(event) = transition.into_event() {
+            match native_transition_route(&event) {
+                NativeTransitionRoute::Event => self.deliver_event(event_loop, id, event),
+                NativeTransitionRoute::Input => {
+                    let EventKind::Input(input) = event else {
+                        unreachable!("native transition route must match event kind")
+                    };
+                    self.deliver_input(event_loop, input);
+                }
+            }
+        }
     }
 
     fn deliver_ready(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, id: Id) {
@@ -614,26 +644,6 @@ impl<H: Handler> WinitRunner<H> {
         patch.apply(&mut instance.state)
     }
 
-    fn deliver_patch(
-        &mut self,
-        event_loop: &winit::event_loop::ActiveEventLoop,
-        patch: WindowStatePatch,
-    ) -> bool {
-        let id = patch.id();
-        match self.apply_patch(patch) {
-            Ok(Some(event)) => {
-                self.deliver_event(event_loop, id, event);
-                true
-            }
-            Ok(None) => true,
-            Err(error) => {
-                eprintln!("{error}");
-                event_loop.exit();
-                false
-            }
-        }
-    }
-
     fn id_for_winit(&self, window_id: winit::window::WindowId) -> Option<Id> {
         self.windows.get(&window_id).copied()
     }
@@ -721,7 +731,7 @@ impl<H: Handler> winit::application::ApplicationHandler<UserEvent> for WinitRunn
                 self.finish_callback(event_loop, action);
             }
             winit::event::WindowEvent::Resized(size) => {
-                if self.deliver_metrics_patch(
+                if self.apply_metrics_transition(
                     event_loop,
                     id,
                     size.width,
@@ -732,7 +742,7 @@ impl<H: Handler> winit::application::ApplicationHandler<UserEvent> for WinitRunn
                 }
             }
             winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                if self.deliver_scale_factor_patch(event_loop, id, scale_factor) {
+                if self.apply_scale_factor_transition(event_loop, id, scale_factor) {
                     self.deliver_resize(event_loop, id);
                 }
             }
@@ -741,26 +751,24 @@ impl<H: Handler> winit::application::ApplicationHandler<UserEvent> for WinitRunn
                     x: f64::from(position.x),
                     y: f64::from(position.y),
                 };
-                self.deliver_patch(
-                    event_loop,
-                    WindowStatePatch::Position {
-                        id,
-                        position: point,
-                    },
-                );
+                let transition = NativeEventTransition::moved(id, point);
+                self.apply_native_transition(event_loop, id, transition);
             }
             winit::event::WindowEvent::Focused(focused) => {
-                self.deliver_patch(event_loop, WindowStatePatch::Focused { id, focused });
+                let transition = NativeEventTransition::focused(id, focused);
+                self.apply_native_transition(event_loop, id, transition);
             }
             winit::event::WindowEvent::ThemeChanged(theme) => {
                 let theme = Some(theme.into());
-                self.deliver_patch(event_loop, WindowStatePatch::Theme { id, theme });
+                let transition = NativeEventTransition::theme_changed(id, theme);
+                self.apply_native_transition(event_loop, id, transition);
             }
             winit::event::WindowEvent::Occluded(occluded) => {
                 if !occluded {
                     self.request_pending_draws();
                 }
-                self.deliver_patch(event_loop, WindowStatePatch::Occluded { id, occluded });
+                let transition = NativeEventTransition::occluded(id, occluded);
+                self.apply_native_transition(event_loop, id, transition);
             }
             winit::event::WindowEvent::HoveredFile(path) => {
                 let entered = !self.hovered_files.contains_key(&id);
@@ -869,26 +877,22 @@ impl<H: Handler> winit::application::ApplicationHandler<UserEvent> for WinitRunn
                 let previous = self
                     .pointer_positions
                     .insert(PointerPositionKey::mouse(id), point);
-                let input = InputEvent::Pointer(PointerEvent {
-                    id,
-                    phase: PointerPhase::Moved,
-                    kind: PointerKind::Mouse,
-                    pointer_id: None,
-                    position: Some(point),
-                    physical_position: Some(PhysicalPoint {
-                        x: position.x.round() as i32,
-                        y: position.y.round() as i32,
-                    }),
-                    delta: previous.map(|previous| Point {
-                        x: point.x - previous.x,
-                        y: point.y - previous.y,
-                    }),
-                    button: None,
-                    modifiers: self.modifiers,
-                    device: PointerDeviceData::default(),
-                    timestamp: Some(Instant::now()),
+                let physical_position = PhysicalPoint {
+                    x: position.x.round() as i32,
+                    y: position.y.round() as i32,
+                };
+                let delta = previous.map(|previous| Point {
+                    x: point.x - previous.x,
+                    y: point.y - previous.y,
                 });
-                self.deliver_input(event_loop, input);
+                let transition = NativeEventTransition::mouse_moved(
+                    id,
+                    point,
+                    physical_position,
+                    delta,
+                    self.modifiers,
+                );
+                self.apply_native_transition(event_loop, id, transition);
             }
             winit::event::WindowEvent::MouseInput { state, button, .. } => {
                 let input = InputEvent::Pointer(PointerEvent {
@@ -992,12 +996,19 @@ pub(crate) fn validate_name(registry: &Registry, name: Option<&str>) -> Result<(
     ))
 }
 
+pub(crate) const fn native_transition_route(event: &EventKind) -> NativeTransitionRoute {
+    match event {
+        EventKind::Input(_) => NativeTransitionRoute::Input,
+        _ => NativeTransitionRoute::Event,
+    }
+}
+
 impl<H: Handler> WinitRunner<H> {
     fn live_ids(&self) -> Vec<Id> {
         self.windows.values().copied().collect()
     }
 
-    fn deliver_metrics_patch(
+    fn apply_metrics_transition(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
         id: Id,
@@ -1016,10 +1027,16 @@ impl<H: Handler> WinitRunner<H> {
         let scale = existing.scale_factor;
         let metrics = Metrics::from_physical_size(id, PhysicalSize { width, height }, scale)
             .with_outer_geometry(existing.outer_position, existing.outer_size);
-        self.deliver_patch(event_loop, WindowStatePatch::metrics(metrics, event))
+        let transition = match event {
+            MetricsEvent::Resized => NativeEventTransition::resized(metrics),
+            MetricsEvent::ScaleFactorChanged => {
+                NativeEventTransition::scale_factor_changed(metrics)
+            }
+        };
+        self.apply_native_transition_patch(event_loop, transition)
     }
 
-    fn deliver_scale_factor_patch(
+    fn apply_scale_factor_transition(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
         id: Id,
@@ -1036,10 +1053,26 @@ impl<H: Handler> WinitRunner<H> {
         let physical_size = existing.physical_size;
         let metrics = Metrics::from_physical_size(id, physical_size, scale_factor)
             .with_outer_geometry(existing.outer_position, existing.outer_size);
-        self.deliver_patch(
-            event_loop,
-            WindowStatePatch::metrics(metrics, MetricsEvent::ScaleFactorChanged),
-        )
+        let transition = NativeEventTransition::scale_factor_changed(metrics);
+        self.apply_native_transition_patch(event_loop, transition)
+    }
+
+    fn apply_native_transition_patch(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        transition: NativeEventTransition,
+    ) -> bool {
+        let Some(patch) = transition.patch().cloned() else {
+            return true;
+        };
+        match self.apply_patch(patch) {
+            Ok(_) => true,
+            Err(error) => {
+                eprintln!("{error}");
+                event_loop.exit();
+                false
+            }
+        }
     }
 
     fn record_hovered_file(&mut self, id: Id, path: PathBuf) -> Vec<String> {

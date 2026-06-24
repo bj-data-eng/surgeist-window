@@ -1,8 +1,8 @@
 use super::command::Action;
 use super::testing::{Effect, Event as HostEvent};
 use super::winit_adapter::{
-    PointerPositionKey, WinitRunner, code_from_winit, ime_event_from_winit, key_from_winit,
-    location_from_winit,
+    NativeTransitionRoute, PointerPositionKey, WinitRunner, code_from_winit, ime_event_from_winit,
+    key_from_winit, location_from_winit, native_transition_route,
 };
 use super::*;
 use crate::descriptor::WindowSnapshotSeed;
@@ -362,6 +362,74 @@ fn window_state_patch_rejects_wrong_target() {
         .expect_err("wrong id should fail");
 
     assert_eq!(error.code, ErrorCode::CommandFailed);
+}
+
+#[test]
+fn native_event_transition_updates_focus_state_and_emits_event() {
+    let id = Id::from_u64(1);
+    let transition = NativeEventTransition::focused(id, true);
+
+    assert_eq!(
+        transition.patch(),
+        Some(&WindowStatePatch::Focused { id, focused: true })
+    );
+    assert_eq!(
+        transition.event(),
+        Some(&EventKind::Focused { id, focused: true })
+    );
+}
+
+#[test]
+fn native_pointer_transition_preserves_logical_and_physical_positions() {
+    let id = Id::from_u64(1);
+    let input = NativeEventTransition::mouse_moved(
+        id,
+        Point { x: 12.0, y: 24.0 },
+        PhysicalPoint { x: 24, y: 48 },
+        None,
+        ModifierState::default(),
+    );
+
+    let Some(EventKind::Input(InputEvent::Pointer(pointer))) = input.event() else {
+        panic!("expected pointer input event");
+    };
+
+    assert_eq!(pointer.position, Some(Point { x: 12.0, y: 24.0 }));
+    assert_eq!(
+        pointer.physical_position,
+        Some(PhysicalPoint { x: 24, y: 48 })
+    );
+}
+
+#[test]
+fn native_pointer_transition_routes_to_input_delivery() {
+    let id = Id::from_u64(1);
+    let transition = NativeEventTransition::mouse_moved(
+        id,
+        Point { x: 12.0, y: 24.0 },
+        PhysicalPoint { x: 24, y: 48 },
+        Some(Point { x: 1.0, y: 2.0 }),
+        ModifierState::default(),
+    );
+
+    let Some(event) = transition.into_event() else {
+        panic!("expected pointer input event");
+    };
+    assert_eq!(
+        native_transition_route(&event),
+        NativeTransitionRoute::Input
+    );
+    let EventKind::Input(InputEvent::Pointer(pointer)) = event else {
+        panic!("expected pointer input event");
+    };
+
+    assert_eq!(pointer.id, id);
+    assert_eq!(pointer.phase, PointerPhase::Moved);
+    assert_eq!(pointer.position, Some(Point { x: 12.0, y: 24.0 }));
+    assert_eq!(
+        pointer.physical_position,
+        Some(PhysicalPoint { x: 24, y: 48 })
+    );
 }
 
 #[test]
