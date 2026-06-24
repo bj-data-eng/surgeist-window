@@ -214,6 +214,35 @@ fn file_drag_position_uses_last_mouse_position_when_available() {
 }
 
 #[test]
+fn winit_runner_exposes_current_capabilities_for_command_planning() {
+    struct Noop;
+    impl Handler for Noop {}
+
+    let runner = WinitRunner::from_loop(Loop::new(Noop));
+
+    assert_eq!(runner.capabilities(), &HostCapabilities::winit_default());
+}
+
+#[test]
+fn winit_runner_rejects_unsupported_command_before_native_application_in_tests() {
+    struct Noop;
+    impl Handler for Noop {}
+
+    let runner = WinitRunner::from_loop(Loop::new(Noop));
+    let command = Command::Open {
+        request: WindowRequest::builder("dialog")
+            .dialog(Id::from_u64(1))
+            .build(),
+    };
+
+    let error = runner
+        .plan_command_for_test(command)
+        .expect_err("dialog role should be rejected before native create");
+
+    assert_eq!(error.code, ErrorCode::UnsupportedFeature);
+}
+
+#[test]
 fn memory_clipboard_round_trips_text_and_image() {
     let mut clipboard = MemoryClipboard::new();
     clipboard.write_text("hello").unwrap();

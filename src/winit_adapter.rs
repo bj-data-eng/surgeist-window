@@ -15,6 +15,7 @@ pub(crate) struct WinitRunner<H> {
     handler: H,
     registry: Registry,
     draw: DrawScheduler,
+    capabilities: HostCapabilities,
     _clipboard: Box<dyn Clipboard>,
     pub(crate) commands: Vec<Command>,
     pub(crate) startup: Vec<Command>,
@@ -58,6 +59,7 @@ impl<H> WinitRunner<H> {
             handler: window_loop.handler,
             registry: window_loop.registry,
             draw: window_loop.draw,
+            capabilities: HostCapabilities::winit_default(),
             _clipboard: window_loop.clipboard,
             commands: window_loop.commands,
             startup: window_loop.startup,
@@ -72,6 +74,16 @@ impl<H> WinitRunner<H> {
             proxy: None,
             startup_applied: false,
         }
+    }
+
+    #[must_use]
+    pub(crate) fn capabilities(&self) -> &HostCapabilities {
+        &self.capabilities
+    }
+
+    #[cfg(test)]
+    pub(crate) fn plan_command_for_test(&self, command: Command) -> Result<HostCommandPlan> {
+        HostCommandPlan::from_command(command, &self.capabilities)
     }
 }
 
@@ -351,18 +363,19 @@ impl<H: Handler> WinitRunner<H> {
     fn apply_commands(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) -> Result<()> {
         let commands = std::mem::take(&mut self.commands);
         for command in commands {
-            self.apply_command(event_loop, command)?;
+            let plan = HostCommandPlan::from_command(command, self.capabilities())?;
+            self.apply_host_command(event_loop, plan.into_command())?;
         }
         Ok(())
     }
 
-    fn apply_command(
+    fn apply_host_command(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
-        command: Command,
+        command: HostCommand,
     ) -> Result<()> {
         match command {
-            Command::Open { request } => {
+            HostCommand::Open { request } => {
                 validate_name(&self.registry, request.name())?;
                 #[cfg(feature = "accessibility")]
                 let requested_visible = request.visible();
@@ -410,17 +423,17 @@ impl<H: Handler> WinitRunner<H> {
                 self.deliver_event(event_loop, id, EventKind::Created(state));
                 self.deliver_ready(event_loop, id);
             }
-            Command::SetTitle { id, title } => {
+            HostCommand::SetTitle { id, title } => {
                 let handle = self.handle(id)?;
                 handle.winit().set_title(&title);
                 self.apply_patch(WindowStatePatch::title(id, title))?;
             }
-            Command::SetPosition { id, position } => {
+            HostCommand::SetPosition { id, position } => {
                 self.handle(id)?
                     .winit()
                     .set_outer_position(winit::dpi::LogicalPosition::new(position.x, position.y));
             }
-            Command::SetVisible { id, visible } => {
+            HostCommand::SetVisible { id, visible } => {
                 let handle = self.handle(id)?;
                 handle.winit().set_visible(visible);
                 self.apply_patch(WindowStatePatch::visible(id, visible))?;
@@ -428,46 +441,42 @@ impl<H: Handler> WinitRunner<H> {
                     self.request_pending_draws();
                 }
             }
-            Command::SetResizable { id, resizable } => {
+            HostCommand::SetResizable { id, resizable } => {
                 self.handle(id)?.winit().set_resizable(resizable);
             }
-            Command::SetControls { id, controls } => {
+            HostCommand::SetControls { id, controls } => {
                 self.handle(id)?
                     .winit()
                     .set_enabled_buttons(controls.into());
             }
-            Command::SetDecorations { id, decorations } => {
+            HostCommand::SetDecorations { id, decorations } => {
                 self.handle(id)?.winit().set_decorations(decorations);
             }
-            Command::SetTransparent { id, transparent } => {
+            HostCommand::SetTransparent { id, transparent } => {
                 self.handle(id)?.winit().set_transparent(transparent);
             }
-            Command::SetInnerSize { id, size } => {
+            HostCommand::SetInnerSize { id, size } => {
                 let _ = self
                     .handle(id)?
                     .winit()
                     .request_inner_size(winit::dpi::LogicalSize::new(size.width, size.height));
             }
-            Command::SetMinInnerSize { id, size } => {
+            HostCommand::SetMinInnerSize { id, size } => {
                 self.handle(id)?.winit().set_min_inner_size(
                     size.map(|size| winit::dpi::LogicalSize::new(size.width, size.height)),
                 );
             }
-            Command::SetMaxInnerSize { id, size } => {
+            HostCommand::SetMaxInnerSize { id, size } => {
                 self.handle(id)?.winit().set_max_inner_size(
                     size.map(|size| winit::dpi::LogicalSize::new(size.width, size.height)),
                 );
             }
-            Command::SetFullscreen { id, fullscreen } => {
+            HostCommand::SetFullscreen { id, fullscreen } => {
                 let fullscreen = match fullscreen {
                     Fullscreen::None => None,
                     Fullscreen::Borderless => Some(winit::window::Fullscreen::Borderless(None)),
                     Fullscreen::Exclusive => {
-                        return Err(Error::new(
-                            ErrorCode::CommandFailed,
-                            "exclusive fullscreen requires a native video mode",
-                        )
-                        .with_id(id));
+                        unreachable!("exclusive fullscreen is rejected during command planning")
                     }
                 };
                 let is_fullscreen = fullscreen.is_some();
@@ -477,16 +486,16 @@ impl<H: Handler> WinitRunner<H> {
                     fullscreen: is_fullscreen,
                 })?;
             }
-            Command::SetLevel { id, level } => {
+            HostCommand::SetLevel { id, level } => {
                 self.handle(id)?.winit().set_window_level(level.into());
             }
-            Command::SetTheme { id, theme } => {
+            HostCommand::SetTheme { id, theme } => {
                 self.handle(id)?.winit().set_theme(theme.map(Into::into));
                 if let Some(event) = self.apply_patch(WindowStatePatch::Theme { id, theme })? {
                     self.deliver_event(event_loop, id, event);
                 }
             }
-            Command::SetCursor { id, cursor } => {
+            HostCommand::SetCursor { id, cursor } => {
                 if self.cursor_state.get(&id) == Some(&cursor) {
                     return Ok(());
                 }
@@ -502,15 +511,11 @@ impl<H: Handler> WinitRunner<H> {
                         self.cursor_state.insert(id, Cursor::Hidden);
                     }
                     Cursor::Custom(_) => {
-                        return Err(Error::new(
-                            ErrorCode::CursorRequestFailed,
-                            "custom cursors are not implemented yet",
-                        )
-                        .with_id(id));
+                        unreachable!("custom cursors are rejected during command planning")
                     }
                 }
             }
-            Command::SetCursorGrab { id, grab } => {
+            HostCommand::SetCursorGrab { id, grab } => {
                 let mode = match grab {
                     CursorGrab::None => winit::window::CursorGrabMode::None,
                     CursorGrab::Confined => winit::window::CursorGrabMode::Confined,
@@ -525,19 +530,19 @@ impl<H: Handler> WinitRunner<H> {
                             .with_source(source)
                     })?;
             }
-            Command::SetIme { id, request } => {
+            HostCommand::SetIme { id, request } => {
                 self.apply_ime(id, request)?;
             }
-            Command::RequestUserAttention { id } => {
+            HostCommand::RequestUserAttention { id } => {
                 self.handle(id)?
                     .winit()
                     .request_user_attention(Some(winit::window::UserAttentionType::Informational));
             }
-            Command::RequestDraw { id } => {
+            HostCommand::RequestDraw { id } => {
                 self.pending_draws.insert(id);
                 self.handle(id)?.request_draw();
             }
-            Command::Destroy { id } => {
+            HostCommand::Destroy { id } => {
                 if let Some(state) = self.close(id) {
                     self.deliver_closed(event_loop, state);
                 }
@@ -656,7 +661,9 @@ impl<H: Handler> winit::application::ApplicationHandler<UserEvent> for WinitRunn
         match event {
             UserEvent::Action(action) => self.apply_action(event_loop, action),
             UserEvent::Command(command) => {
-                if let Err(error) = self.apply_command(event_loop, command) {
+                let result = HostCommandPlan::from_command(command, self.capabilities())
+                    .and_then(|plan| self.apply_host_command(event_loop, plan.into_command()));
+                if let Err(error) = result {
                     eprintln!("{error}");
                     event_loop.exit();
                 }
