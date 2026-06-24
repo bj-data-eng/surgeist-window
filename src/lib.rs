@@ -13,6 +13,7 @@ pub use keyboard_types::Code;
 pub use raw_window_handle;
 
 mod accessibility;
+mod capability;
 mod clipboard;
 mod command;
 mod context;
@@ -30,6 +31,7 @@ pub mod testing;
 mod winit_adapter;
 
 pub use accessibility::{AccessibilityActionRequest, AccessibilityBridge, AccessibilityEvent};
+pub use capability::{CursorCapability, FullscreenMode, HostCapabilities, RoleKind};
 pub use clipboard::{Clipboard, ClipboardImage, ClipboardImageRef, MemoryClipboard};
 pub use command::Command;
 pub use context::Context;

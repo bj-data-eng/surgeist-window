@@ -385,6 +385,37 @@ fn window_modeling_baseline_descriptor_rejects_exclusive_fullscreen_for_winit_at
 }
 
 #[test]
+fn host_capabilities_report_current_winit_support() {
+    let capabilities = HostCapabilities::winit_default();
+
+    assert!(capabilities.supports_role(RoleKind::Root));
+    assert!(!capabilities.supports_role(RoleKind::Dialog));
+    assert!(!capabilities.supports_role(RoleKind::Tool));
+    assert!(!capabilities.supports_role(RoleKind::Popup));
+    assert!(capabilities.supports_fullscreen(FullscreenMode::None));
+    assert!(capabilities.supports_fullscreen(FullscreenMode::Borderless));
+    assert!(!capabilities.supports_fullscreen(FullscreenMode::Exclusive));
+    assert!(capabilities.supports_cursor(CursorCapability::Icon));
+    assert!(capabilities.supports_cursor(CursorCapability::Hidden));
+    assert!(!capabilities.supports_cursor(CursorCapability::Custom));
+}
+
+#[test]
+fn host_capabilities_explain_rejections_with_stable_codes() {
+    let capabilities = HostCapabilities::winit_default();
+
+    let role_error = capabilities
+        .require_role(RoleKind::Dialog)
+        .expect_err("dialog roles are not yet supported by current winit plan");
+    let fullscreen_error = capabilities
+        .require_fullscreen(FullscreenMode::Exclusive)
+        .expect_err("exclusive fullscreen is unsupported without video mode selection");
+
+    assert_eq!(role_error.code, ErrorCode::UnsupportedFeature);
+    assert_eq!(fullscreen_error.code, ErrorCode::UnsupportedFeature);
+}
+
+#[test]
 fn modifier_state_converts_from_winit() {
     let modifiers = winit::keyboard::ModifiersState::SHIFT
         | winit::keyboard::ModifiersState::CONTROL
