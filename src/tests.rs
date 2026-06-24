@@ -354,6 +354,37 @@ fn native_descriptor_rejects_unimplemented_roles() {
 }
 
 #[test]
+fn window_modeling_baseline_descriptor_rejects_non_root_roles_for_winit_attributes() {
+    let descriptor = Descriptor {
+        role: Role::Dialog {
+            parent: Id::from_u64(1),
+            modality: Modality::Window,
+        },
+        ..Descriptor::default()
+    };
+
+    let error = descriptor
+        .to_winit_attributes()
+        .expect_err("role support is not modeled yet");
+
+    assert_eq!(error.code, ErrorCode::UnsupportedFeature);
+}
+
+#[test]
+fn window_modeling_baseline_descriptor_rejects_exclusive_fullscreen_for_winit_attributes() {
+    let descriptor = Descriptor {
+        fullscreen: Fullscreen::Exclusive,
+        ..Descriptor::default()
+    };
+
+    let error = descriptor
+        .to_winit_attributes()
+        .expect_err("exclusive fullscreen requires a native video mode");
+
+    assert_eq!(error.code, ErrorCode::CommandFailed);
+}
+
+#[test]
 fn modifier_state_converts_from_winit() {
     let modifiers = winit::keyboard::ModifiersState::SHIFT
         | winit::keyboard::ModifiersState::CONTROL
@@ -539,6 +570,41 @@ fn fake_host_reports_unknown_command_target() {
 
     assert_eq!(error.code, ErrorCode::CommandFailed);
     assert_eq!(error.id, Some(id));
+}
+
+#[test]
+fn window_modeling_baseline_fake_host_records_failed_duplicate_command_without_new_window() {
+    let mut host = testing::Host::new();
+
+    host.apply(open("main")).unwrap();
+    let error = host
+        .apply(open("main"))
+        .expect_err("duplicate name should fail");
+
+    assert_eq!(error.code, ErrorCode::CommandFailed);
+    assert_eq!(host.commands().len(), 2);
+    assert_eq!(host.registry().len(), 1);
+}
+
+#[test]
+fn window_modeling_baseline_fake_host_destroy_removes_window_cursor_and_records_closed_state() {
+    let mut host = testing::Host::new();
+
+    host.apply(open("main")).unwrap();
+    let id = host.window_id("main").expect("main window should exist");
+    host.apply(Command::SetCursor {
+        id,
+        cursor: Cursor::Hidden,
+    })
+    .unwrap();
+    host.apply(Command::Destroy { id }).unwrap();
+
+    assert!(host.registry().get(id).is_none());
+    assert!(
+        host.events()
+            .iter()
+            .any(|event| matches!(event, testing::Event::Destroyed(destroyed) if *destroyed == id))
+    );
 }
 
 #[test]
