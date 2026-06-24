@@ -28,6 +28,7 @@ mod loop_;
 mod registry;
 mod scheduler;
 pub mod testing;
+mod transition;
 mod winit_adapter;
 
 pub use accessibility::{AccessibilityActionRequest, AccessibilityBridge, AccessibilityEvent};
@@ -46,14 +47,16 @@ pub use dsl::{
 };
 pub use error::{Error, ErrorCode, Result};
 pub use event::{
-    FileDragEvent, ImeConfig, ImeEvent, ImeHint, ImePurpose, ImeRequest, ImeSurroundingText,
-    InputEvent, KeyEvent, KeyState, ModifierState, PointerButton, PointerDeviceData, PointerEvent,
-    PointerKind, PointerPhase, StandardKeyBindingEvent, TouchPhase, WheelDelta, WheelEvent,
+    EventKind, FileDragEvent, ImeConfig, ImeEvent, ImeHint, ImePurpose, ImeRequest,
+    ImeSurroundingText, InputEvent, KeyEvent, KeyState, ModifierState, PointerButton,
+    PointerDeviceData, PointerEvent, PointerKind, PointerPhase, StandardKeyBindingEvent,
+    TouchPhase, WheelDelta, WheelEvent,
 };
 pub use geometry::{Id, Insets, PhysicalPoint, PhysicalSize, Point, Rect, Size};
 pub use handler::Handler;
 pub use loop_::Loop;
 pub use registry::{Access, Handle, Instance, Proxy, Ref, Registry};
+pub use transition::{MetricsEvent, WindowStatePatch};
 
 pub(crate) use registry::UserEvent;
 pub(crate) use scheduler::{DrawScheduler, native_control_flow};

@@ -659,6 +659,11 @@ pub struct Metrics {
 
 impl Metrics {
     #[must_use]
+    pub const fn id(&self) -> Id {
+        self.id
+    }
+
+    #[must_use]
     pub fn from_physical_size(id: Id, physical_size: PhysicalSize, scale_factor: f64) -> Self {
         let scale = if scale_factor > 0.0 {
             scale_factor

@@ -413,9 +413,7 @@ impl<H: Handler> WinitRunner<H> {
             Command::SetTitle { id, title } => {
                 let handle = self.handle(id)?;
                 handle.winit().set_title(&title);
-                if let Some(instance) = self.registry.get_mut(id) {
-                    instance.state.set_title(title);
-                }
+                self.apply_patch(WindowStatePatch::title(id, title))?;
             }
             Command::SetPosition { id, position } => {
                 self.handle(id)?
@@ -425,9 +423,7 @@ impl<H: Handler> WinitRunner<H> {
             Command::SetVisible { id, visible } => {
                 let handle = self.handle(id)?;
                 handle.winit().set_visible(visible);
-                if let Some(instance) = self.registry.get_mut(id) {
-                    instance.state.set_visible(Some(visible));
-                }
+                self.apply_patch(WindowStatePatch::visible(id, visible))?;
                 if visible {
                     self.request_pending_draws();
                 }
@@ -474,15 +470,20 @@ impl<H: Handler> WinitRunner<H> {
                         .with_id(id));
                     }
                 };
+                let is_fullscreen = fullscreen.is_some();
                 self.handle(id)?.winit().set_fullscreen(fullscreen);
+                self.apply_patch(WindowStatePatch::Fullscreen {
+                    id,
+                    fullscreen: is_fullscreen,
+                })?;
             }
             Command::SetLevel { id, level } => {
                 self.handle(id)?.winit().set_window_level(level.into());
             }
             Command::SetTheme { id, theme } => {
                 self.handle(id)?.winit().set_theme(theme.map(Into::into));
-                if let Some(instance) = self.registry.get_mut(id) {
-                    instance.state.set_theme(theme);
+                if let Some(event) = self.apply_patch(WindowStatePatch::Theme { id, theme })? {
+                    self.deliver_event(event_loop, id, event);
                 }
             }
             Command::SetCursor { id, cursor } => {
@@ -599,6 +600,35 @@ impl<H: Handler> WinitRunner<H> {
         Ok(())
     }
 
+    fn apply_patch(&mut self, patch: WindowStatePatch) -> Result<Option<EventKind>> {
+        let id = patch.id();
+        let instance = self
+            .registry
+            .get_mut(id)
+            .ok_or_else(|| Error::new(ErrorCode::CommandFailed, "unknown window").with_id(id))?;
+        patch.apply(&mut instance.state)
+    }
+
+    fn deliver_patch(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        patch: WindowStatePatch,
+    ) -> bool {
+        let id = patch.id();
+        match self.apply_patch(patch) {
+            Ok(Some(event)) => {
+                self.deliver_event(event_loop, id, event);
+                true
+            }
+            Ok(None) => true,
+            Err(error) => {
+                eprintln!("{error}");
+                event_loop.exit();
+                false
+            }
+        }
+    }
+
     fn id_for_winit(&self, window_id: winit::window::WindowId) -> Option<Id> {
         self.windows.get(&window_id).copied()
     }
@@ -684,51 +714,46 @@ impl<H: Handler> winit::application::ApplicationHandler<UserEvent> for WinitRunn
                 self.finish_callback(event_loop, action);
             }
             winit::event::WindowEvent::Resized(size) => {
-                self.update_metrics(id, size.width, size.height);
-                self.deliver_resize(event_loop, id);
+                if self.deliver_metrics_patch(
+                    event_loop,
+                    id,
+                    size.width,
+                    size.height,
+                    MetricsEvent::Resized,
+                ) {
+                    self.deliver_resize(event_loop, id);
+                }
             }
             winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                self.update_scale_factor(id, scale_factor);
-                self.deliver_resize(event_loop, id);
+                if self.deliver_scale_factor_patch(event_loop, id, scale_factor) {
+                    self.deliver_resize(event_loop, id);
+                }
             }
             winit::event::WindowEvent::Moved(position) => {
                 let point = Point {
                     x: f64::from(position.x),
                     y: f64::from(position.y),
                 };
-                if let Some(instance) = self.registry.get_mut(id) {
-                    instance.state.set_position(Some(point));
-                }
-                self.deliver_event(
+                self.deliver_patch(
                     event_loop,
-                    id,
-                    EventKind::Moved {
+                    WindowStatePatch::Position {
                         id,
                         position: point,
                     },
                 );
             }
             winit::event::WindowEvent::Focused(focused) => {
-                if let Some(instance) = self.registry.get_mut(id) {
-                    instance.state.set_focused(focused);
-                }
-                self.deliver_event(event_loop, id, EventKind::Focused { id, focused });
+                self.deliver_patch(event_loop, WindowStatePatch::Focused { id, focused });
             }
             winit::event::WindowEvent::ThemeChanged(theme) => {
                 let theme = Some(theme.into());
-                if let Some(instance) = self.registry.get_mut(id) {
-                    instance.state.set_theme(theme);
-                }
-                self.deliver_event(event_loop, id, EventKind::ThemeChanged { id, theme });
+                self.deliver_patch(event_loop, WindowStatePatch::Theme { id, theme });
             }
             winit::event::WindowEvent::Occluded(occluded) => {
-                if let Some(instance) = self.registry.get_mut(id) {
-                    instance.state.set_occluded(Some(occluded));
-                }
                 if !occluded {
                     self.request_pending_draws();
                 }
-                self.deliver_event(event_loop, id, EventKind::Occluded { id, occluded });
+                self.deliver_patch(event_loop, WindowStatePatch::Occluded { id, occluded });
             }
             winit::event::WindowEvent::HoveredFile(path) => {
                 let entered = !self.hovered_files.contains_key(&id);
@@ -965,36 +990,49 @@ impl<H: Handler> WinitRunner<H> {
         self.windows.values().copied().collect()
     }
 
-    fn update_metrics(&mut self, id: Id, width: u32, height: u32) -> Metrics {
-        let existing = self.registry.get(id).map(|window| window.metrics());
-        let scale = existing
-            .as_ref()
-            .map_or(1.0, |metrics| metrics.scale_factor);
-        let metrics = Metrics::from_physical_size(id, PhysicalSize { width, height }, scale)
-            .with_outer_geometry(
-                existing.as_ref().and_then(|metrics| metrics.outer_position),
-                existing.as_ref().and_then(|metrics| metrics.outer_size),
+    fn deliver_metrics_patch(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        id: Id,
+        width: u32,
+        height: u32,
+        event: MetricsEvent,
+    ) -> bool {
+        let Some(existing) = self.registry.get(id).map(|window| window.metrics()) else {
+            eprintln!(
+                "{}",
+                Error::new(ErrorCode::CommandFailed, "unknown window").with_id(id)
             );
-        if let Some(instance) = self.registry.get_mut(id) {
-            instance.state.set_metrics(metrics.clone());
-        }
-        metrics
+            event_loop.exit();
+            return false;
+        };
+        let scale = existing.scale_factor;
+        let metrics = Metrics::from_physical_size(id, PhysicalSize { width, height }, scale)
+            .with_outer_geometry(existing.outer_position, existing.outer_size);
+        self.deliver_patch(event_loop, WindowStatePatch::metrics(metrics, event))
     }
 
-    fn update_scale_factor(&mut self, id: Id, scale_factor: f64) -> Metrics {
-        let existing = self.registry.get(id).map(|window| window.metrics());
-        let physical_size = existing
-            .as_ref()
-            .map_or_else(PhysicalSize::default, |metrics| metrics.physical_size);
-        let metrics = Metrics::from_physical_size(id, physical_size, scale_factor)
-            .with_outer_geometry(
-                existing.as_ref().and_then(|metrics| metrics.outer_position),
-                existing.as_ref().and_then(|metrics| metrics.outer_size),
+    fn deliver_scale_factor_patch(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        id: Id,
+        scale_factor: f64,
+    ) -> bool {
+        let Some(existing) = self.registry.get(id).map(|window| window.metrics()) else {
+            eprintln!(
+                "{}",
+                Error::new(ErrorCode::CommandFailed, "unknown window").with_id(id)
             );
-        if let Some(instance) = self.registry.get_mut(id) {
-            instance.state.set_metrics(metrics.clone());
-        }
-        metrics
+            event_loop.exit();
+            return false;
+        };
+        let physical_size = existing.physical_size;
+        let metrics = Metrics::from_physical_size(id, physical_size, scale_factor)
+            .with_outer_geometry(existing.outer_position, existing.outer_size);
+        self.deliver_patch(
+            event_loop,
+            WindowStatePatch::metrics(metrics, MetricsEvent::ScaleFactorChanged),
+        )
     }
 
     fn record_hovered_file(&mut self, id: Id, path: PathBuf) -> Vec<String> {

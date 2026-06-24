@@ -46,6 +46,27 @@ impl Event {
     }
 }
 
+impl From<EventKind> for Event {
+    fn from(event: EventKind) -> Self {
+        match event {
+            EventKind::Created(state) => Self::Created(state),
+            EventKind::Destroyed(id) => Self::Destroyed(id),
+            EventKind::Suspended(id) => Self::Suspended(id),
+            EventKind::Resumed(id) => Self::Resumed(id),
+            EventKind::CloseRequested(id) => Self::CloseRequested(id),
+            EventKind::Focused { id, focused } => Self::Focused { id, focused },
+            EventKind::Resized(metrics) => Self::Resized(metrics),
+            EventKind::ScaleFactorChanged(metrics) => Self::ScaleFactorChanged(metrics),
+            EventKind::Moved { id, position } => Self::Moved { id, position },
+            EventKind::Occluded { id, occluded } => Self::Occluded { id, occluded },
+            EventKind::ThemeChanged { id, theme } => Self::ThemeChanged { id, theme },
+            EventKind::FileDrag(event) => Self::FileDrag(event),
+            EventKind::Input(event) => Self::Input(event),
+            EventKind::Accessibility(event) => Self::Accessibility(event),
+        }
+    }
+}
+
 /// Lifecycle effect produced by a handler dispatch in the fake host.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
@@ -135,14 +156,13 @@ impl Host {
                 self.events.push(Event::Created(state));
             }
             Command::SetTitle { id, title } => {
-                self.state_mut(id)?.set_title(title);
+                self.apply_patch(WindowStatePatch::title(id, title))?;
             }
             Command::SetPosition { id, position } => {
-                self.state_mut(id)?.set_position(Some(position));
-                self.events.push(Event::Moved { id, position });
+                self.apply_patch(WindowStatePatch::Position { id, position })?;
             }
             Command::SetVisible { id, visible } => {
-                self.state_mut(id)?.set_visible(Some(visible));
+                self.apply_patch(WindowStatePatch::visible(id, visible))?;
             }
             Command::SetResizable { id, .. }
             | Command::SetControls { id, .. }
@@ -164,33 +184,35 @@ impl Host {
                 self.ime_requests.push((id, request));
             }
             Command::SetInnerSize { id, size } => {
-                let state = self.state_mut(id)?;
-                let scale = state.metrics().scale_factor;
-                let metrics = Metrics::from_physical_size(
-                    id,
-                    PhysicalSize {
-                        width: (size.width * scale).round().max(0.0) as u32,
-                        height: (size.height * scale).round().max(0.0) as u32,
-                    },
-                    scale,
-                )
-                .with_outer_geometry(state.metrics().outer_position, state.metrics().outer_size);
-                state.set_metrics(metrics.clone());
-                self.events.push(Event::Resized(metrics));
+                let metrics = {
+                    let state = self.state_mut(id)?;
+                    let scale = state.metrics().scale_factor;
+                    Metrics::from_physical_size(
+                        id,
+                        PhysicalSize {
+                            width: (size.width * scale).round().max(0.0) as u32,
+                            height: (size.height * scale).round().max(0.0) as u32,
+                        },
+                        scale,
+                    )
+                    .with_outer_geometry(state.metrics().outer_position, state.metrics().outer_size)
+                };
+                self.apply_patch(WindowStatePatch::metrics(metrics, MetricsEvent::Resized))?;
             }
             Command::SetMinInnerSize { id, .. } | Command::SetMaxInnerSize { id, .. } => {
                 self.require_window(id)?;
             }
             Command::SetFullscreen { id, fullscreen } => {
-                self.state_mut(id)?
-                    .set_fullscreen(!matches!(fullscreen, Fullscreen::None));
+                self.apply_patch(WindowStatePatch::Fullscreen {
+                    id,
+                    fullscreen: !matches!(fullscreen, Fullscreen::None),
+                })?;
             }
             Command::SetLevel { id, .. } => {
                 self.require_window(id)?;
             }
             Command::SetTheme { id, theme } => {
-                self.state_mut(id)?.set_theme(theme);
-                self.events.push(Event::ThemeChanged { id, theme });
+                self.apply_patch(WindowStatePatch::Theme { id, theme })?;
             }
             Command::RequestDraw { id } => {
                 self.require_window(id)?;
@@ -393,6 +415,18 @@ impl Host {
             .get_mut(id)
             .map(Instance::state_mut)
             .ok_or_else(|| Error::new(ErrorCode::CommandFailed, "unknown window").with_id(id))
+    }
+
+    fn apply_patch(&mut self, patch: WindowStatePatch) -> Result<()> {
+        let id = patch.id();
+        let event = {
+            let state = self.state_mut(id)?;
+            patch.apply(state)?
+        };
+        if let Some(event) = event {
+            self.events.push(event.into());
+        }
+        Ok(())
     }
 }
 

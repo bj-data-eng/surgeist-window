@@ -288,6 +288,54 @@ fn window_snapshot_is_observed_runtime_state_built_through_constructor() {
 }
 
 #[test]
+fn window_state_patch_updates_snapshot_and_reports_event() {
+    let id = Id::from_u64(1);
+    let metrics = Metrics::from_physical_size(
+        id,
+        PhysicalSize {
+            width: 800,
+            height: 600,
+        },
+        1.0,
+    );
+    let mut snapshot = WindowSnapshot::new(id, "Main", metrics);
+
+    let patch = WindowStatePatch::title(id, "Renamed");
+    let event = patch.apply(&mut snapshot).expect("patch should apply");
+
+    assert_eq!(snapshot.title(), "Renamed");
+    assert!(event.is_none());
+
+    let visible = WindowStatePatch::visible(id, false);
+    let event = visible
+        .apply(&mut snapshot)
+        .expect("visible patch should apply");
+    assert_eq!(snapshot.visible(), Some(false));
+    assert!(event.is_none());
+}
+
+#[test]
+fn window_state_patch_rejects_wrong_target() {
+    let id = Id::from_u64(1);
+    let metrics = Metrics::from_physical_size(
+        id,
+        PhysicalSize {
+            width: 800,
+            height: 600,
+        },
+        1.0,
+    );
+    let mut snapshot = WindowSnapshot::new(id, "Main", metrics);
+    let patch = WindowStatePatch::title(Id::from_u64(2), "Wrong");
+
+    let error = patch
+        .apply(&mut snapshot)
+        .expect_err("wrong id should fail");
+
+    assert_eq!(error.code, ErrorCode::CommandFailed);
+}
+
+#[test]
 fn descriptor_converts_to_winit_attributes() {
     let descriptor = WindowRequest::builder("surgeist-window")
         .title("Window")
