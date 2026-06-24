@@ -790,6 +790,52 @@ fn window_modeling_baseline_fake_host_destroy_removes_window_cursor_and_records_
 }
 
 #[test]
+fn fake_host_rejects_unsupported_commands_through_host_planning() {
+    let mut host = testing::Host::new();
+    host.apply(open("main")).unwrap();
+    let id = host.window_id("main").unwrap();
+
+    let cursor_error = host
+        .apply(Command::SetCursor {
+            id,
+            cursor: Cursor::Custom(CustomCursorId::from_u64(1)),
+        })
+        .expect_err("custom cursor should be rejected by capabilities");
+    let fullscreen_error = host
+        .apply(Command::SetFullscreen {
+            id,
+            fullscreen: Fullscreen::Exclusive,
+        })
+        .expect_err("exclusive fullscreen should be rejected by capabilities");
+
+    assert_eq!(cursor_error.code, ErrorCode::UnsupportedFeature);
+    assert_eq!(fullscreen_error.code, ErrorCode::UnsupportedFeature);
+}
+
+#[test]
+fn fake_host_uses_shared_state_patch_for_visible_and_theme_commands() {
+    let mut host = testing::Host::new();
+    host.apply(open("main")).unwrap();
+    let id = host.window_id("main").unwrap();
+
+    host.apply(Command::SetVisible { id, visible: false })
+        .unwrap();
+    host.apply(Command::SetTheme {
+        id,
+        theme: Some(Theme::Dark),
+    })
+    .unwrap();
+
+    let state = host.registry().get(id).unwrap();
+    let state = state.instance.state();
+    assert_eq!(state.visible(), Some(false));
+    assert_eq!(state.theme(), Some(Theme::Dark));
+    assert!(host.events().iter().any(|event| {
+        matches!(event, testing::Event::ThemeChanged { id: event_id, theme: Some(Theme::Dark) } if *event_id == id)
+    }));
+}
+
+#[test]
 fn fake_host_deduplicates_cursor_updates() {
     let mut host = testing::Host::new();
     host.apply(Command::Open {

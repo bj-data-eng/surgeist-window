@@ -94,16 +94,33 @@ impl From<Action> for Effect {
 }
 
 /// Fake native host for command and event contract tests.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Host {
     registry: Registry,
     draw: DrawScheduler,
+    capabilities: HostCapabilities,
     events: Vec<Event>,
     commands: Vec<Command>,
     closed: HashMap<Id, State>,
     cursors: HashMap<Id, Cursor>,
     cursor_updates: Vec<(Id, Cursor)>,
     ime_requests: Vec<(Id, ImeRequest)>,
+}
+
+impl Default for Host {
+    fn default() -> Self {
+        Self {
+            registry: Registry::default(),
+            draw: DrawScheduler::default(),
+            capabilities: HostCapabilities::winit_default(),
+            events: Vec::new(),
+            commands: Vec::new(),
+            closed: HashMap::new(),
+            cursors: HashMap::new(),
+            cursor_updates: Vec::new(),
+            ime_requests: Vec::new(),
+        }
+    }
 }
 
 impl Host {
@@ -115,6 +132,11 @@ impl Host {
     #[must_use]
     pub fn registry(&self) -> &Registry {
         &self.registry
+    }
+
+    #[must_use]
+    pub fn capabilities(&self) -> &HostCapabilities {
+        &self.capabilities
     }
 
     #[must_use]
@@ -147,87 +169,8 @@ impl Host {
     pub fn apply(&mut self, command: impl Into<Command>) -> Result<()> {
         let command = command.into();
         self.commands.push(command.clone());
-        match command {
-            Command::Open { request } => {
-                validate_name(&self.registry, request.name())?;
-                let id = self.registry.reserve_id();
-                let state = fake_state_from_descriptor(id, &request);
-                self.registry.insert(Instance::new(id, state.clone()));
-                self.events.push(Event::Created(state));
-            }
-            Command::SetTitle { id, title } => {
-                self.apply_patch(WindowStatePatch::title(id, title))?;
-            }
-            Command::SetPosition { id, position } => {
-                self.apply_patch(WindowStatePatch::Position { id, position })?;
-            }
-            Command::SetVisible { id, visible } => {
-                self.apply_patch(WindowStatePatch::visible(id, visible))?;
-            }
-            Command::SetResizable { id, .. }
-            | Command::SetControls { id, .. }
-            | Command::SetDecorations { id, .. }
-            | Command::SetTransparent { id, .. }
-            | Command::SetCursorGrab { id, .. }
-            | Command::RequestUserAttention { id } => {
-                self.require_window(id)?;
-            }
-            Command::SetCursor { id, cursor } => {
-                self.require_window(id)?;
-                if self.cursors.get(&id) != Some(&cursor) {
-                    self.cursors.insert(id, cursor.clone());
-                    self.cursor_updates.push((id, cursor));
-                }
-            }
-            Command::SetIme { id, request } => {
-                self.require_window(id)?;
-                self.ime_requests.push((id, request));
-            }
-            Command::SetInnerSize { id, size } => {
-                let metrics = {
-                    let state = self.state_mut(id)?;
-                    let scale = state.metrics().scale_factor;
-                    Metrics::from_physical_size(
-                        id,
-                        PhysicalSize {
-                            width: (size.width * scale).round().max(0.0) as u32,
-                            height: (size.height * scale).round().max(0.0) as u32,
-                        },
-                        scale,
-                    )
-                    .with_outer_geometry(state.metrics().outer_position, state.metrics().outer_size)
-                };
-                self.apply_patch(WindowStatePatch::metrics(metrics, MetricsEvent::Resized))?;
-            }
-            Command::SetMinInnerSize { id, .. } | Command::SetMaxInnerSize { id, .. } => {
-                self.require_window(id)?;
-            }
-            Command::SetFullscreen { id, fullscreen } => {
-                self.apply_patch(WindowStatePatch::Fullscreen {
-                    id,
-                    fullscreen: !matches!(fullscreen, Fullscreen::None),
-                })?;
-            }
-            Command::SetLevel { id, .. } => {
-                self.require_window(id)?;
-            }
-            Command::SetTheme { id, theme } => {
-                self.apply_patch(WindowStatePatch::Theme { id, theme })?;
-            }
-            Command::RequestDraw { id } => {
-                self.require_window(id)?;
-                self.draw.request(&Action::DrawNext(id));
-            }
-            Command::Destroy { id } => {
-                self.require_window(id)?;
-                if let Some(instance) = self.registry.remove(id) {
-                    self.closed.insert(id, instance.state().clone());
-                }
-                self.cursors.remove(&id);
-                self.events.push(Event::Destroyed(id));
-            }
-        }
-        Ok(())
+        let plan = HostCommandPlan::from_command(command, &self.capabilities)?;
+        self.apply_plan(plan)
     }
 
     #[must_use]
@@ -428,10 +371,105 @@ impl Host {
         }
         Ok(())
     }
+
+    fn apply_plan(&mut self, plan: HostCommandPlan) -> Result<()> {
+        match plan.into_command() {
+            HostCommand::Open { request } => self.apply_open_request(request),
+            HostCommand::SetTitle { id, title } => {
+                self.apply_patch(WindowStatePatch::title(id, title))
+            }
+            HostCommand::SetPosition { id, position } => {
+                self.apply_patch(WindowStatePatch::Position { id, position })
+            }
+            HostCommand::SetVisible { id, visible } => {
+                self.apply_patch(WindowStatePatch::visible(id, visible))
+            }
+            HostCommand::SetInnerSize { id, size } => self.apply_inner_size(id, size),
+            HostCommand::SetFullscreen { id, fullscreen } => {
+                self.apply_patch(WindowStatePatch::Fullscreen {
+                    id,
+                    fullscreen: !matches!(fullscreen, Fullscreen::None),
+                })
+            }
+            HostCommand::SetTheme { id, theme } => {
+                self.apply_patch(WindowStatePatch::Theme { id, theme })
+            }
+            HostCommand::SetCursor { id, cursor } => self.apply_cursor(id, cursor),
+            HostCommand::SetIme { id, request } => self.apply_ime_request(id, request),
+            HostCommand::RequestDraw { id } => self.apply_draw_request(id),
+            HostCommand::Destroy { id } => self.apply_destroy(id),
+            HostCommand::SetResizable { id, .. }
+            | HostCommand::SetControls { id, .. }
+            | HostCommand::SetDecorations { id, .. }
+            | HostCommand::SetTransparent { id, .. }
+            | HostCommand::SetMinInnerSize { id, .. }
+            | HostCommand::SetMaxInnerSize { id, .. }
+            | HostCommand::SetLevel { id, .. }
+            | HostCommand::SetCursorGrab { id, .. }
+            | HostCommand::RequestUserAttention { id } => self.require_window(id),
+        }
+    }
+
+    fn apply_open_request(&mut self, request: WindowRequest) -> Result<()> {
+        validate_name(&self.registry, request.name())?;
+        let id = self.registry.reserve_id();
+        let state = fake_state_from_request(id, &request);
+        self.registry.insert(Instance::new(id, state.clone()));
+        self.events.push(Event::Created(state));
+        Ok(())
+    }
+
+    fn apply_inner_size(&mut self, id: Id, size: Size) -> Result<()> {
+        let metrics = {
+            let state = self.state_mut(id)?;
+            let scale = state.metrics().scale_factor;
+            Metrics::from_physical_size(
+                id,
+                PhysicalSize {
+                    width: (size.width * scale).round().max(0.0) as u32,
+                    height: (size.height * scale).round().max(0.0) as u32,
+                },
+                scale,
+            )
+            .with_outer_geometry(state.metrics().outer_position, state.metrics().outer_size)
+        };
+        self.apply_patch(WindowStatePatch::metrics(metrics, MetricsEvent::Resized))
+    }
+
+    fn apply_cursor(&mut self, id: Id, cursor: Cursor) -> Result<()> {
+        self.require_window(id)?;
+        if self.cursors.get(&id) != Some(&cursor) {
+            self.cursors.insert(id, cursor.clone());
+            self.cursor_updates.push((id, cursor));
+        }
+        Ok(())
+    }
+
+    fn apply_ime_request(&mut self, id: Id, request: ImeRequest) -> Result<()> {
+        self.require_window(id)?;
+        self.ime_requests.push((id, request));
+        Ok(())
+    }
+
+    fn apply_draw_request(&mut self, id: Id) -> Result<()> {
+        self.require_window(id)?;
+        self.draw.request(&Action::DrawNext(id));
+        Ok(())
+    }
+
+    fn apply_destroy(&mut self, id: Id) -> Result<()> {
+        self.require_window(id)?;
+        if let Some(instance) = self.registry.remove(id) {
+            self.closed.insert(id, instance.state().clone());
+        }
+        self.cursors.remove(&id);
+        self.events.push(Event::Destroyed(id));
+        Ok(())
+    }
 }
 
-fn fake_state_from_descriptor(id: Id, descriptor: &Descriptor) -> State {
-    let logical_size = descriptor.inner_size().unwrap_or(Size {
+fn fake_state_from_request(id: Id, request: &WindowRequest) -> State {
+    let logical_size = request.inner_size().unwrap_or(Size {
         width: 800.0,
         height: 600.0,
     });
@@ -442,24 +480,24 @@ fn fake_state_from_descriptor(id: Id, descriptor: &Descriptor) -> State {
             width: logical_size.width.round().max(0.0) as u32,
             height: logical_size.height.round().max(0.0) as u32,
         },
-        outer_position: descriptor.position(),
+        outer_position: request.position(),
         outer_size: None,
         scale_factor: 1.0,
         safe_area: Insets::default(),
     };
     WindowSnapshot::from_seed(WindowSnapshotSeed {
         id,
-        title: descriptor.title().to_owned(),
-        name: descriptor.name().map(str::to_owned),
+        title: request.title().to_owned(),
+        name: request.name().map(str::to_owned),
         metrics,
-        position: descriptor.position(),
+        position: request.position(),
         focused: false,
-        visible: Some(descriptor.visible()),
+        visible: Some(request.visible()),
         minimized: Some(false),
         maximized: false,
         occluded: Some(false),
-        fullscreen: !matches!(descriptor.fullscreen(), Fullscreen::None),
-        theme: descriptor.theme(),
-        role: descriptor.role().clone(),
+        fullscreen: !matches!(request.fullscreen(), Fullscreen::None),
+        theme: request.theme(),
+        role: request.role().clone(),
     })
 }
