@@ -80,7 +80,7 @@ impl<'a> Context<'a> {
     }
 
     #[must_use]
-    pub fn state(&self, target: impl Into<Selector>) -> Option<&super::State> {
+    pub fn state(&self, target: impl Into<Selector>) -> Option<&super::WindowSnapshot> {
         match target.into() {
             Selector::Id(id) => self.registry.get(id).map(|window| window.instance.state()),
             Selector::Name(name) => self

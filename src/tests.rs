@@ -8,7 +8,7 @@ use super::*;
 use crate::descriptor::WindowSnapshotSeed;
 use std::{collections::HashMap, time::Instant};
 
-fn state(id: Id) -> State {
+fn state(id: Id) -> WindowSnapshot {
     WindowSnapshot::from_seed(WindowSnapshotSeed {
         id,
         title: String::from("Test"),
@@ -31,6 +31,18 @@ fn state(id: Id) -> State {
         theme: Some(Theme::Dark),
         role: Role::Root,
     })
+}
+
+#[test]
+fn window_public_front_door_uses_modeled_phase_names() {
+    let _ = std::mem::size_of::<WindowRequest>();
+    let _ = std::mem::size_of::<WindowRequestBuilder>();
+    let _ = std::mem::size_of::<WindowSnapshot>();
+    let _ = std::mem::size_of::<HostCapabilities>();
+    let _ = std::mem::size_of::<HostCommandPlan>();
+    let _ = std::mem::size_of::<HostCommand>();
+    let _ = std::mem::size_of::<WindowStatePatch>();
+    let _ = std::mem::size_of::<NativeEventTransition>();
 }
 
 #[test]
@@ -433,8 +445,8 @@ fn native_pointer_transition_routes_to_input_delivery() {
 }
 
 #[test]
-fn descriptor_converts_to_winit_attributes() {
-    let descriptor = WindowRequest::builder("surgeist-window")
+fn window_request_converts_to_winit_attributes() {
+    let request = WindowRequest::builder("surgeist-window")
         .title("Window")
         .position(Point { x: 12.0, y: 24.0 })
         .inner_size(Size {
@@ -464,7 +476,7 @@ fn descriptor_converts_to_winit_attributes() {
         .root()
         .build();
 
-    let attributes = descriptor.to_winit_attributes().unwrap();
+    let attributes = request.to_winit_attributes().unwrap();
 
     assert_eq!(attributes.title, "Window");
     assert_eq!(
@@ -512,34 +524,34 @@ fn descriptor_converts_to_winit_attributes() {
 
 #[test]
 fn exclusive_fullscreen_requires_native_video_mode() {
-    let descriptor = WindowRequest::builder("exclusive")
+    let request = WindowRequest::builder("exclusive")
         .fullscreen(Fullscreen::Exclusive)
         .build();
 
-    let error = descriptor.to_winit_attributes().unwrap_err();
+    let error = request.to_winit_attributes().unwrap_err();
 
     assert_eq!(error.code, ErrorCode::CommandFailed);
 }
 
 #[test]
-fn native_descriptor_rejects_unimplemented_roles() {
-    let descriptor = WindowRequest::builder("dialog")
+fn native_window_request_rejects_unimplemented_roles() {
+    let request = WindowRequest::builder("dialog")
         .dialog(Id::from_u64(1))
         .build();
 
-    let error = descriptor.to_winit_attributes().unwrap_err();
+    let error = request.to_winit_attributes().unwrap_err();
 
     assert_eq!(error.code, ErrorCode::UnsupportedFeature);
     assert!(error.message.contains("roles"));
 }
 
 #[test]
-fn window_modeling_baseline_descriptor_rejects_non_root_roles_for_winit_attributes() {
-    let descriptor = WindowRequest::builder("dialog")
+fn window_modeling_baseline_request_rejects_non_root_roles_for_winit_attributes() {
+    let request = WindowRequest::builder("dialog")
         .dialog(Id::from_u64(1))
         .build();
 
-    let error = descriptor
+    let error = request
         .to_winit_attributes()
         .expect_err("role support is not modeled yet");
 
@@ -547,12 +559,12 @@ fn window_modeling_baseline_descriptor_rejects_non_root_roles_for_winit_attribut
 }
 
 #[test]
-fn window_modeling_baseline_descriptor_rejects_exclusive_fullscreen_for_winit_attributes() {
-    let descriptor = WindowRequest::builder("exclusive")
+fn window_modeling_baseline_request_rejects_exclusive_fullscreen_for_winit_attributes() {
+    let request = WindowRequest::builder("exclusive")
         .fullscreen(Fullscreen::Exclusive)
         .build();
 
-    let error = descriptor
+    let error = request
         .to_winit_attributes()
         .expect_err("exclusive fullscreen requires a native video mode");
 
@@ -818,7 +830,7 @@ fn fake_host_applies_open_and_state_commands() {
 fn fake_host_exercises_draw_and_close_contract() {
     let mut host = testing::Host::new();
     host.apply(Command::Open {
-        request: Descriptor::default(),
+        request: WindowRequest::default(),
     })
     .unwrap();
     let id = match &host.events()[0] {
@@ -936,7 +948,7 @@ fn fake_host_uses_shared_state_patch_for_visible_and_theme_commands() {
 fn fake_host_deduplicates_cursor_updates() {
     let mut host = testing::Host::new();
     host.apply(Command::Open {
-        request: Descriptor::default(),
+        request: WindowRequest::default(),
     })
     .unwrap();
     let id = match &host.events()[0] {
@@ -973,7 +985,7 @@ fn fake_host_deduplicates_cursor_updates() {
 fn fake_host_records_ime_request_order() {
     let mut host = testing::Host::new();
     host.apply(Command::Open {
-        request: Descriptor::default(),
+        request: WindowRequest::default(),
     })
     .unwrap();
     let id = match &host.events()[0] {
@@ -1023,7 +1035,7 @@ fn fake_host_records_ime_request_order() {
 fn fake_host_emits_lifecycle_events() {
     let mut host = testing::Host::new();
     host.apply(Command::Open {
-        request: Descriptor::default(),
+        request: WindowRequest::default(),
     })
     .unwrap();
     let id = match &host.events()[0] {
@@ -1045,7 +1057,7 @@ fn fake_host_emits_lifecycle_events() {
 fn fake_host_forwards_accessibility_events() {
     let mut host = testing::Host::new();
     host.apply(Command::Open {
-        request: Descriptor::default(),
+        request: WindowRequest::default(),
     })
     .unwrap();
     let id = match &host.events()[0] {
@@ -1098,7 +1110,7 @@ fn accessibility_event_exposes_target_id() {
 }
 
 #[test]
-fn dsl_open_builder_lowers_to_descriptor_and_command() {
+fn dsl_open_builder_lowers_to_request_and_command() {
     let parent = Id::from_u64(11);
     let open = open("inspector")
         .title("Inspector")
@@ -1116,75 +1128,70 @@ fn dsl_open_builder_lowers_to_descriptor_and_command() {
         .theme(Some(Theme::Dark))
         .tool(Some(parent));
 
-    let descriptor = open.descriptor().clone();
+    let request = open.request().clone();
 
-    assert_eq!(descriptor.name(), Some("inspector"));
-    assert_eq!(descriptor.title(), "Inspector");
-    assert_eq!(descriptor.position(), Some(Point { x: 12.0, y: 24.0 }));
+    assert_eq!(request.name(), Some("inspector"));
+    assert_eq!(request.title(), "Inspector");
+    assert_eq!(request.position(), Some(Point { x: 12.0, y: 24.0 }));
     assert_eq!(
-        descriptor.inner_size(),
+        request.inner_size(),
         Some(Size {
             width: 420.0,
             height: 640.0,
         })
     );
     assert_eq!(
-        descriptor.min_inner_size(),
+        request.min_inner_size(),
         Some(Size {
             width: 320.0,
             height: 240.0,
         })
     );
     assert_eq!(
-        descriptor.max_inner_size(),
+        request.max_inner_size(),
         Some(Size {
             width: 1200.0,
             height: 900.0,
         })
     );
-    assert!(!descriptor.resizable());
+    assert!(!request.resizable());
     assert_eq!(
-        descriptor.controls(),
+        request.controls(),
         Controls {
             close: true,
             minimize: false,
             maximize: false,
         }
     );
-    assert!(!descriptor.decorations());
-    assert!(descriptor.transparent());
-    assert!(!descriptor.visible());
-    assert_eq!(descriptor.fullscreen(), Fullscreen::Borderless);
-    assert_eq!(descriptor.level(), Level::AlwaysOnTop);
-    assert_eq!(descriptor.theme(), Some(Theme::Dark));
+    assert!(!request.decorations());
+    assert!(request.transparent());
+    assert!(!request.visible());
+    assert_eq!(request.fullscreen(), Fullscreen::Borderless);
+    assert_eq!(request.level(), Level::AlwaysOnTop);
+    assert_eq!(request.theme(), Some(Theme::Dark));
     assert_eq!(
-        descriptor.role(),
+        request.role(),
         &Role::Tool {
             parent: Some(parent),
         }
     );
 
-    assert_eq!(
-        Command::from(open),
-        Command::Open {
-            request: descriptor
-        }
-    );
+    assert_eq!(Command::from(open), Command::Open { request });
 }
 
 #[test]
 fn dsl_open_builder_lowers_role_theme_and_control_variants() {
-    assert_eq!(Open::unnamed().descriptor().name(), None);
+    assert_eq!(Open::unnamed().request().name(), None);
     assert_eq!(
-        open("first").name("second").descriptor().name(),
+        open("first").name("second").request().name(),
         Some("second")
     );
-    assert_eq!(open("root").root().descriptor().role(), &Role::Root);
+    assert_eq!(open("root").root().request().role(), &Role::Root);
     assert_eq!(
         open("dialog")
             .dialog(Id::from_u64(4))
             .modal(Modality::App)
-            .descriptor()
+            .request()
             .role(),
         &Role::Dialog {
             parent: Id::from_u64(4),
@@ -1192,12 +1199,12 @@ fn dsl_open_builder_lowers_role_theme_and_control_variants() {
         }
     );
     assert_eq!(
-        open("popup").popup(Id::from_u64(8)).descriptor().role(),
+        open("popup").popup(Id::from_u64(8)).request().role(),
         &Role::Popup {
             parent: Id::from_u64(8),
         }
     );
-    assert_eq!(open("theme").theme(None).descriptor().theme(), None);
+    assert_eq!(open("theme").theme(None).request().theme(), None);
     assert_eq!(
         Controls::from(controls().all(false).close(true)),
         Controls {

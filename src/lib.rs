@@ -38,7 +38,7 @@ pub use command::Command;
 pub use context::Context;
 pub use cursor::{Cursor, CursorGrab, CustomCursorId};
 pub use descriptor::{
-    Controls, Descriptor, Fullscreen, Level, Metrics, Modality, Role, State, Theme, WindowRequest,
+    Controls, Fullscreen, Level, Metrics, Modality, Role, Theme, WindowRequest,
     WindowRequestBuilder, WindowSnapshot,
 };
 pub use dsl::{

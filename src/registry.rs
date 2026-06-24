@@ -1,4 +1,4 @@
-use super::{Command, Error, ErrorCode, Id, Metrics, Result, State, command::Action};
+use super::{Command, Error, ErrorCode, Id, Metrics, Result, WindowSnapshot, command::Action};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::{collections::HashMap, sync::Arc};
 
@@ -6,13 +6,13 @@ use std::{collections::HashMap, sync::Arc};
 #[derive(Debug)]
 pub struct Instance {
     pub(crate) id: Id,
-    pub(crate) state: State,
+    pub(crate) state: WindowSnapshot,
     pub(crate) handle: Option<Handle>,
 }
 
 impl Instance {
     #[must_use]
-    pub fn new(id: Id, state: State) -> Self {
+    pub fn new(id: Id, state: WindowSnapshot) -> Self {
         Self {
             id,
             state,
@@ -21,7 +21,7 @@ impl Instance {
     }
 
     #[must_use]
-    pub fn with_handle(id: Id, state: State, handle: Handle) -> Self {
+    pub fn with_handle(id: Id, state: WindowSnapshot, handle: Handle) -> Self {
         Self {
             id,
             state,
@@ -35,11 +35,11 @@ impl Instance {
     }
 
     #[must_use]
-    pub const fn state(&self) -> &State {
+    pub const fn state(&self) -> &WindowSnapshot {
         &self.state
     }
 
-    pub fn state_mut(&mut self) -> &mut State {
+    pub fn state_mut(&mut self) -> &mut WindowSnapshot {
         &mut self.state
     }
 

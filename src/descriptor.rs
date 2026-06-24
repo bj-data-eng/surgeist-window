@@ -113,8 +113,6 @@ pub struct WindowRequest {
     role: Role,
 }
 
-pub type Descriptor = WindowRequest;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowRequestBuilder {
     pub(crate) request: WindowRequest,
@@ -241,7 +239,7 @@ impl WindowRequest {
         self.max_inner_size = size;
     }
 
-    /// Convert this stable descriptor into `winit` window attributes.
+    /// Convert this stable window request into `winit` window attributes.
     ///
     /// This is intentionally explicit rather than a blanket `From` impl because
     /// some Surgeist intents may need diagnostics when a native backend cannot
@@ -491,8 +489,6 @@ pub struct WindowSnapshot {
     theme: Option<Theme>,
     role: Role,
 }
-
-pub type State = WindowSnapshot;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct WindowSnapshotSeed {

@@ -1,7 +1,7 @@
 use super::{
     Command, Context, Controls, Cursor, CursorGrab, Error, ErrorCode, Fullscreen, Handle, Id,
     ImeRequest, InputEvent, Level, Metrics, Modality, Point, Proxy, Rect, Ref, Result, Role, Size,
-    State, Theme, WindowRequest, WindowRequestBuilder, command::Action,
+    Theme, WindowRequest, WindowRequestBuilder, WindowSnapshot, command::Action,
 };
 use std::{collections::HashSet, time::Instant};
 
@@ -275,31 +275,31 @@ impl Open {
     }
 
     #[must_use]
-    pub fn descriptor(&self) -> &WindowRequest {
+    pub fn request(&self) -> &WindowRequest {
         &self.builder.request
     }
 
     #[must_use]
-    pub fn into_descriptor(self) -> WindowRequest {
+    pub fn into_request(self) -> WindowRequest {
         self.builder.build()
     }
 
     #[must_use]
     pub fn build(self) -> WindowRequest {
-        self.into_descriptor()
+        self.into_request()
     }
 
     #[must_use]
     pub fn into_command(self) -> Command {
         Command::Open {
-            request: self.into_descriptor(),
+            request: self.into_request(),
         }
     }
 }
 
 impl From<Open> for WindowRequest {
     fn from(open: Open) -> Self {
-        open.into_descriptor()
+        open.into_request()
     }
 }
 
@@ -537,13 +537,13 @@ pub struct Close<'a> {
 }
 
 pub struct Closed<'a> {
-    state: State,
+    state: WindowSnapshot,
     context: Context<'a>,
 }
 
 pub trait Scope<'a> {
     fn id(&self) -> Id;
-    fn state(&self) -> &State;
+    fn state(&self) -> &WindowSnapshot;
 
     #[must_use]
     fn metrics(&self) -> &Metrics {
@@ -616,7 +616,7 @@ impl<'a> Ready<'a> {
     }
 
     #[must_use]
-    pub fn state(&self) -> &State {
+    pub fn state(&self) -> &WindowSnapshot {
         self.context
             .state(self.id)
             .expect("ready scope always targets a live window")
@@ -679,7 +679,7 @@ impl<'a> Resize<'a> {
     }
 
     #[must_use]
-    pub fn state(&self) -> &State {
+    pub fn state(&self) -> &WindowSnapshot {
         self.context
             .state(self.id)
             .expect("resize scope always targets a live window")
@@ -758,7 +758,7 @@ impl<'a> Input<'a> {
     }
 
     #[must_use]
-    pub fn state(&self) -> &State {
+    pub fn state(&self) -> &WindowSnapshot {
         self.context
             .state(self.id())
             .expect("input scope always targets a live window")
@@ -866,7 +866,7 @@ impl<'a> Close<'a> {
     }
 
     #[must_use]
-    pub fn state(&self) -> &State {
+    pub fn state(&self) -> &WindowSnapshot {
         self.context
             .state(self.id)
             .expect("close scope always targets a live window")
@@ -914,7 +914,7 @@ impl<'a> Close<'a> {
 }
 
 impl<'a> Closed<'a> {
-    pub(crate) fn new(state: State, context: Context<'a>) -> Self {
+    pub(crate) fn new(state: WindowSnapshot, context: Context<'a>) -> Self {
         Self { state, context }
     }
 
@@ -924,7 +924,7 @@ impl<'a> Closed<'a> {
     }
 
     #[must_use]
-    pub fn state(&self) -> &State {
+    pub fn state(&self) -> &WindowSnapshot {
         &self.state
     }
 
@@ -970,7 +970,7 @@ impl<'a> Frame<'a> {
     }
 
     #[must_use]
-    pub fn state(&self) -> &State {
+    pub fn state(&self) -> &WindowSnapshot {
         self.context
             .state(self.id)
             .expect("frame scope always targets a live window")
@@ -1034,7 +1034,7 @@ impl<'a> Scope<'a> for Ready<'a> {
         Ready::id(self)
     }
 
-    fn state(&self) -> &State {
+    fn state(&self) -> &WindowSnapshot {
         Ready::state(self)
     }
 
@@ -1072,7 +1072,7 @@ impl<'a> Scope<'a> for Resize<'a> {
         Resize::id(self)
     }
 
-    fn state(&self) -> &State {
+    fn state(&self) -> &WindowSnapshot {
         Resize::state(self)
     }
 
@@ -1110,7 +1110,7 @@ impl<'a> Scope<'a> for Input<'a> {
         Input::id(self)
     }
 
-    fn state(&self) -> &State {
+    fn state(&self) -> &WindowSnapshot {
         Input::state(self)
     }
 
@@ -1148,7 +1148,7 @@ impl<'a> Scope<'a> for Close<'a> {
         Close::id(self)
     }
 
-    fn state(&self) -> &State {
+    fn state(&self) -> &WindowSnapshot {
         Close::state(self)
     }
 
@@ -1188,7 +1188,7 @@ impl<'a> Scope<'a> for Frame<'a> {
         Frame::id(self)
     }
 
-    fn state(&self) -> &State {
+    fn state(&self) -> &WindowSnapshot {
         Frame::state(self)
     }
 
@@ -1264,14 +1264,14 @@ impl<H> App<H> {
     pub(crate) fn validate_startup(&self) -> Result<()> {
         let mut names = HashSet::new();
         for open in &self.startup {
-            let descriptor = open.descriptor();
-            if !matches!(descriptor.role(), Role::Root) {
+            let request = open.request();
+            if !matches!(request.role(), Role::Root) {
                 return Err(Error::new(
                     ErrorCode::UnsupportedFeature,
                     "startup windows must be root windows",
                 ));
             }
-            if let Some(name) = descriptor.name()
+            if let Some(name) = request.name()
                 && !name.is_empty()
                 && !names.insert(name)
             {

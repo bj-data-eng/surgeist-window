@@ -9,7 +9,7 @@ use std::{collections::HashMap, time::Instant};
 /// Lifecycle event recorded by the fake host.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
-    Created(State),
+    Created(WindowSnapshot),
     Destroyed(Id),
     Suspended(Id),
     Resumed(Id),
@@ -101,7 +101,7 @@ pub struct Host {
     capabilities: HostCapabilities,
     events: Vec<Event>,
     commands: Vec<Command>,
-    closed: HashMap<Id, State>,
+    closed: HashMap<Id, WindowSnapshot>,
     cursors: HashMap<Id, Cursor>,
     cursor_updates: Vec<(Id, Cursor)>,
     ime_requests: Vec<(Id, ImeRequest)>,
@@ -353,7 +353,7 @@ impl Host {
             .ok_or_else(|| Error::new(ErrorCode::CommandFailed, "unknown window").with_id(id))
     }
 
-    fn state_mut(&mut self, id: Id) -> Result<&mut State> {
+    fn state_mut(&mut self, id: Id) -> Result<&mut WindowSnapshot> {
         self.registry
             .get_mut(id)
             .map(Instance::state_mut)
@@ -468,7 +468,7 @@ impl Host {
     }
 }
 
-fn fake_state_from_request(id: Id, request: &WindowRequest) -> State {
+fn fake_state_from_request(id: Id, request: &WindowRequest) -> WindowSnapshot {
     let logical_size = request.inner_size().unwrap_or(Size {
         width: 800.0,
         height: 600.0,

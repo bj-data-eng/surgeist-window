@@ -253,7 +253,7 @@ impl<H: Handler> WinitRunner<H> {
         Ok(action)
     }
 
-    fn call_with_closed(&mut self, state: State) -> Result<Action> {
+    fn call_with_closed(&mut self, state: WindowSnapshot) -> Result<Action> {
         let mut commands = Vec::new();
         let mut actions = Vec::new();
         let action = {
@@ -368,7 +368,11 @@ impl<H: Handler> WinitRunner<H> {
         self.finish_callback(event_loop, action);
     }
 
-    fn deliver_closed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, state: State) {
+    fn deliver_closed(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        state: WindowSnapshot,
+    ) {
         let action = self.call_with_closed(state);
         match action {
             Ok(action) => {
@@ -410,16 +414,16 @@ impl<H: Handler> WinitRunner<H> {
                 #[cfg(feature = "accessibility")]
                 let requested_visible = request.visible();
                 #[cfg(feature = "accessibility")]
-                let native_descriptor = {
-                    let mut native_descriptor = request.clone();
-                    native_descriptor.set_visible(false);
-                    native_descriptor
+                let native_request = {
+                    let mut native_request = request.clone();
+                    native_request.set_visible(false);
+                    native_request
                 };
                 #[cfg(not(feature = "accessibility"))]
-                let native_descriptor = request.clone();
+                let native_request = request.clone();
                 let window = Arc::new(
                     event_loop
-                        .create_window(native_descriptor.to_winit_attributes()?)
+                        .create_window(native_request.to_winit_attributes()?)
                         .map_err(|source| {
                             Error::new(ErrorCode::WindowCreateFailed, "failed to create window")
                                 .with_source(source)
@@ -588,7 +592,7 @@ impl<H: Handler> WinitRunner<H> {
             .handle()
     }
 
-    fn close(&mut self, id: Id) -> Option<State> {
+    fn close(&mut self, id: Id) -> Option<WindowSnapshot> {
         let state = if let Some(instance) = self.registry.remove(id) {
             if let Some(handle) = instance.handle {
                 self.windows.remove(&handle.winit().id());
@@ -1102,9 +1106,9 @@ impl<H: Handler> WinitRunner<H> {
 
 pub(crate) fn state_from_winit(
     id: Id,
-    descriptor: &Descriptor,
+    request: &WindowRequest,
     window: &winit::window::Window,
-) -> State {
+) -> WindowSnapshot {
     let scale_factor = window.scale_factor();
     let inner_size = window.inner_size();
     let outer_position = window.outer_position().ok().map(|position| Point {
@@ -1129,17 +1133,17 @@ pub(crate) fn state_from_winit(
     .with_outer_geometry(outer_position, outer_size);
     WindowSnapshot::from_seed(WindowSnapshotSeed {
         id,
-        title: descriptor.title().to_owned(),
-        name: descriptor.name().map(str::to_owned),
+        title: request.title().to_owned(),
+        name: request.name().map(str::to_owned),
         position: outer_position,
         focused: window.has_focus(),
-        visible: Some(descriptor.visible()),
+        visible: Some(request.visible()),
         minimized: None,
         maximized: window.is_maximized(),
         occluded: None,
         fullscreen: window.fullscreen().is_some(),
-        theme: descriptor.theme(),
-        role: descriptor.role().clone(),
+        theme: request.theme(),
+        role: request.role().clone(),
         metrics,
     })
 }

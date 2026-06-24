@@ -1,11 +1,11 @@
-use super::{AccessibilityEvent, Id, Metrics, PhysicalPoint, Point, Rect, State, Theme};
+use super::{AccessibilityEvent, Id, Metrics, PhysicalPoint, Point, Rect, Theme, WindowSnapshot};
 use std::time::Instant;
 
 /// Native window event payload emitted by this crate.
 #[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum EventKind {
-    Created(State),
+    Created(WindowSnapshot),
     Destroyed(Id),
     Suspended(Id),
     Resumed(Id),
