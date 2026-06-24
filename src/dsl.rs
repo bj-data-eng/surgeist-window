@@ -1,7 +1,7 @@
 use super::{
-    Command, Context, Controls, Cursor, CursorGrab, Descriptor, Error, ErrorCode, Fullscreen,
-    Handle, Id, ImeRequest, InputEvent, Level, Metrics, Modality, Point, Proxy, Rect, Ref, Result,
-    Role, Size, State, Theme, command::Action,
+    Command, Context, Controls, Cursor, CursorGrab, Error, ErrorCode, Fullscreen, Handle, Id,
+    ImeRequest, InputEvent, Level, Metrics, Modality, Point, Proxy, Rect, Ref, Result, Role, Size,
+    State, Theme, WindowRequest, WindowRequestBuilder, command::Action,
 };
 use std::{collections::HashSet, time::Instant};
 
@@ -92,172 +92,212 @@ pub fn open(name: impl Into<String>) -> Open {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Open {
-    descriptor: Descriptor,
+    builder: WindowRequestBuilder,
 }
 
 impl Open {
     #[must_use]
     pub fn unnamed() -> Self {
         Self {
-            descriptor: Descriptor::default(),
+            builder: WindowRequestBuilder {
+                request: WindowRequest::default(),
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            builder: WindowRequest::builder(name),
         }
     }
 
     #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
-        self.descriptor.name = Some(name.into());
+        self.builder = self.builder.name(name);
         self
     }
 
     #[must_use]
     pub fn title(mut self, title: impl Into<String>) -> Self {
-        self.descriptor.title = title.into();
+        self.builder = self.builder.title(title);
         self
     }
 
     #[must_use]
-    pub fn at(mut self, point: impl Into<Point>) -> Self {
-        self.descriptor.position = Some(point.into());
+    pub fn position(mut self, point: impl Into<Point>) -> Self {
+        self.builder = self.builder.position(point);
         self
     }
 
     #[must_use]
-    pub fn size(mut self, size: impl Into<Size>) -> Self {
-        self.descriptor.inner_size = Some(size.into());
+    pub fn at(self, point: impl Into<Point>) -> Self {
+        self.position(point)
+    }
+
+    #[must_use]
+    pub fn inner_size(mut self, size: impl Into<Size>) -> Self {
+        self.builder = self.builder.inner_size(size);
         self
     }
 
     #[must_use]
-    pub fn min(mut self, size: impl Into<Size>) -> Self {
-        self.descriptor.min_inner_size = Some(size.into());
+    pub fn size(self, size: impl Into<Size>) -> Self {
+        self.inner_size(size)
+    }
+
+    #[must_use]
+    pub fn min_inner_size(mut self, size: impl Into<Size>) -> Self {
+        self.builder = self.builder.min_inner_size(size);
         self
     }
 
     #[must_use]
-    pub fn max(mut self, size: impl Into<Size>) -> Self {
-        self.descriptor.max_inner_size = Some(size.into());
+    pub fn min(mut self, size: impl Into<Option<Size>>) -> Self {
+        self.builder.request.set_min_inner_size(size.into());
+        self
+    }
+
+    #[must_use]
+    pub fn max_inner_size(mut self, size: impl Into<Size>) -> Self {
+        self.builder = self.builder.max_inner_size(size);
+        self
+    }
+
+    #[must_use]
+    pub fn max(mut self, size: impl Into<Option<Size>>) -> Self {
+        self.builder.request.set_max_inner_size(size.into());
         self
     }
 
     #[must_use]
     pub fn resizable(mut self, resizable: bool) -> Self {
-        self.descriptor.resizable = resizable;
+        self.builder = self.builder.resizable(resizable);
         self
     }
 
     #[must_use]
-    pub fn fixed(self) -> Self {
-        self.resizable(false)
+    pub fn fixed(mut self) -> Self {
+        self.builder = self.builder.fixed();
+        self
     }
 
     #[must_use]
     pub fn controls(mut self, controls: impl Into<Controls>) -> Self {
-        self.descriptor.controls = controls.into();
+        self.builder = self.builder.controls(controls);
         self
     }
 
     #[must_use]
     pub fn decorations(mut self, enabled: bool) -> Self {
-        self.descriptor.decorations = enabled;
+        self.builder = self.builder.decorations(enabled);
         self
     }
 
     #[must_use]
     pub fn transparent(mut self, transparent: bool) -> Self {
-        self.descriptor.transparent = transparent;
+        self.builder = self.builder.transparent(transparent);
         self
     }
 
     #[must_use]
     pub fn visible(mut self, visible: bool) -> Self {
-        self.descriptor.visible = visible;
+        self.builder = self.builder.visible(visible);
         self
     }
 
     #[must_use]
-    pub fn hidden(self) -> Self {
-        self.visible(false)
-    }
-
-    #[must_use]
-    pub fn fullscreen(mut self, fullscreen: Fullscreen) -> Self {
-        self.descriptor.fullscreen = fullscreen;
+    pub fn hidden(mut self) -> Self {
+        self.builder = self.builder.hidden();
         self
     }
 
     #[must_use]
-    pub fn borderless(self) -> Self {
-        self.fullscreen(Fullscreen::Borderless)
+    pub fn fullscreen(mut self, fullscreen: impl Into<Fullscreen>) -> Self {
+        self.builder = self.builder.fullscreen(fullscreen);
+        self
+    }
+
+    #[must_use]
+    pub fn borderless(mut self) -> Self {
+        self.builder = self.builder.borderless();
+        self
     }
 
     #[must_use]
     pub fn level(mut self, level: Level) -> Self {
-        self.descriptor.level = level;
+        self.builder = self.builder.level(level);
         self
     }
 
     #[must_use]
     pub fn theme(mut self, theme: impl Into<Option<Theme>>) -> Self {
-        self.descriptor.theme = theme.into();
+        self.builder = self.builder.theme(theme);
         self
     }
 
     #[must_use]
     pub fn role(mut self, role: Role) -> Self {
-        self.descriptor.role = role;
+        self.builder = self.builder.role(role);
         self
     }
 
     #[must_use]
-    pub fn root(self) -> Self {
-        self.role(Role::Root)
+    pub fn root(mut self) -> Self {
+        self.builder = self.builder.root();
+        self
     }
 
     #[must_use]
-    pub fn dialog(self, parent: Id) -> Self {
-        self.role(Role::Dialog {
-            parent,
-            modality: Modality::Window,
-        })
+    pub fn dialog(mut self, parent: Id) -> Self {
+        self.builder = self.builder.dialog(parent);
+        self
     }
 
     #[must_use]
     pub fn modal(mut self, modality: Modality) -> Self {
-        if let Role::Dialog { modality: slot, .. } = &mut self.descriptor.role {
-            *slot = modality;
+        if let Role::Dialog { parent, .. } = self.builder.request.role().clone() {
+            self.builder = self.builder.modal(parent, modality);
         }
         self
     }
 
     #[must_use]
-    pub fn tool(self, parent: Option<Id>) -> Self {
-        self.role(Role::Tool { parent })
+    pub fn tool(mut self, parent: Option<Id>) -> Self {
+        self.builder = self.builder.tool(parent);
+        self
     }
 
     #[must_use]
-    pub fn popup(self, parent: Id) -> Self {
-        self.role(Role::Popup { parent })
+    pub fn popup(mut self, parent: Id) -> Self {
+        self.builder = self.builder.popup(parent);
+        self
     }
 
     #[must_use]
-    pub fn descriptor(&self) -> &Descriptor {
-        &self.descriptor
+    pub fn descriptor(&self) -> &WindowRequest {
+        &self.builder.request
     }
 
     #[must_use]
-    pub fn into_descriptor(self) -> Descriptor {
-        self.descriptor
+    pub fn into_descriptor(self) -> WindowRequest {
+        self.builder.build()
+    }
+
+    #[must_use]
+    pub fn build(self) -> WindowRequest {
+        self.into_descriptor()
     }
 
     #[must_use]
     pub fn into_command(self) -> Command {
         Command::Open {
-            descriptor: self.descriptor,
+            descriptor: self.into_descriptor(),
         }
     }
 }
 
-impl From<Open> for Descriptor {
+impl From<Open> for WindowRequest {
     fn from(open: Open) -> Self {
         open.into_descriptor()
     }
@@ -507,7 +547,7 @@ pub trait Scope<'a> {
 
     #[must_use]
     fn metrics(&self) -> &Metrics {
-        &self.state().metrics
+        self.state().metrics()
     }
 
     #[must_use]
@@ -522,17 +562,17 @@ pub trait Scope<'a> {
 
     #[must_use]
     fn is_focused(&self) -> bool {
-        self.state().focused
+        self.state().is_focused()
     }
 
     #[must_use]
     fn is_visible(&self) -> bool {
-        self.state().visible.unwrap_or(true)
+        self.state().is_visible()
     }
 
     #[must_use]
     fn is_occluded(&self) -> bool {
-        self.state().occluded.unwrap_or(false)
+        self.state().is_occluded()
     }
 
     #[must_use]
@@ -599,7 +639,7 @@ impl<'a> Ready<'a> {
     }
 
     pub fn metrics(&self) -> &Metrics {
-        &self.state().metrics
+        self.state().metrics()
     }
 
     pub fn draw(&mut self) -> &mut Self {
@@ -647,7 +687,7 @@ impl<'a> Resize<'a> {
 
     #[must_use]
     pub fn metrics(&self) -> &Metrics {
-        &self.state().metrics
+        self.state().metrics()
     }
 
     #[must_use]
@@ -726,7 +766,7 @@ impl<'a> Input<'a> {
 
     #[must_use]
     pub fn metrics(&self) -> &Metrics {
-        &self.state().metrics
+        self.state().metrics()
     }
 
     #[must_use]
@@ -834,7 +874,7 @@ impl<'a> Close<'a> {
 
     #[must_use]
     pub fn metrics(&self) -> &Metrics {
-        &self.state().metrics
+        self.state().metrics()
     }
 
     pub fn context_mut(&mut self) -> &mut Context<'a> {
@@ -880,7 +920,7 @@ impl<'a> Closed<'a> {
 
     #[must_use]
     pub fn id(&self) -> Id {
-        self.state.id
+        self.state.id()
     }
 
     #[must_use]
@@ -890,7 +930,7 @@ impl<'a> Closed<'a> {
 
     #[must_use]
     pub fn metrics(&self) -> &Metrics {
-        &self.state.metrics
+        self.state.metrics()
     }
 
     pub fn context_mut(&mut self) -> &mut Context<'a> {
@@ -937,7 +977,7 @@ impl<'a> Frame<'a> {
     }
 
     pub fn metrics(&self) -> &Metrics {
-        &self.state().metrics
+        self.state().metrics()
     }
 
     #[must_use]
@@ -945,7 +985,7 @@ impl<'a> Frame<'a> {
         self.context
             .state(self.id)
             .expect("frame scope always targets a live window")
-            .metrics
+            .metrics()
             .logical_size
     }
 
@@ -954,7 +994,7 @@ impl<'a> Frame<'a> {
         self.context
             .state(self.id)
             .expect("frame scope always targets a live window")
-            .metrics
+            .metrics()
             .scale_factor
     }
 
@@ -1225,13 +1265,13 @@ impl<H> App<H> {
         let mut names = HashSet::new();
         for open in &self.startup {
             let descriptor = open.descriptor();
-            if !matches!(descriptor.role, Role::Root) {
+            if !matches!(descriptor.role(), Role::Root) {
                 return Err(Error::new(
                     ErrorCode::UnsupportedFeature,
                     "startup windows must be root windows",
                 ));
             }
-            if let Some(name) = descriptor.name.as_deref()
+            if let Some(name) = descriptor.name()
                 && !name.is_empty()
                 && !names.insert(name)
             {

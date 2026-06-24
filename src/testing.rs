@@ -1,4 +1,7 @@
-use super::{command::Action, context::resolve_actions_with, winit_adapter::validate_name, *};
+use super::{
+    command::Action, context::resolve_actions_with, descriptor::WindowSnapshotSeed,
+    winit_adapter::validate_name, *,
+};
 use std::{collections::HashMap, time::Instant};
 
 // Test utilities for exercising the window contract without opening native windows.
@@ -26,7 +29,7 @@ impl Event {
     #[must_use]
     pub fn id(&self) -> Id {
         match self {
-            Self::Created(state) => state.id,
+            Self::Created(state) => state.id(),
             Self::Destroyed(id)
             | Self::Suspended(id)
             | Self::Resumed(id)
@@ -125,21 +128,21 @@ impl Host {
         self.commands.push(command.clone());
         match command {
             Command::Open { descriptor } => {
-                validate_name(&self.registry, descriptor.name.as_deref())?;
+                validate_name(&self.registry, descriptor.name())?;
                 let id = self.registry.reserve_id();
                 let state = fake_state_from_descriptor(id, &descriptor);
                 self.registry.insert(Instance::new(id, state.clone()));
                 self.events.push(Event::Created(state));
             }
             Command::SetTitle { id, title } => {
-                self.state_mut(id)?.title = title;
+                self.state_mut(id)?.set_title(title);
             }
             Command::SetPosition { id, position } => {
-                self.state_mut(id)?.position = Some(position);
+                self.state_mut(id)?.set_position(Some(position));
                 self.events.push(Event::Moved { id, position });
             }
             Command::SetVisible { id, visible } => {
-                self.state_mut(id)?.visible = Some(visible);
+                self.state_mut(id)?.set_visible(Some(visible));
             }
             Command::SetResizable { id, .. }
             | Command::SetControls { id, .. }
@@ -162,7 +165,7 @@ impl Host {
             }
             Command::SetInnerSize { id, size } => {
                 let state = self.state_mut(id)?;
-                let scale = state.metrics.scale_factor;
+                let scale = state.metrics().scale_factor;
                 let metrics = Metrics::from_physical_size(
                     id,
                     PhysicalSize {
@@ -171,21 +174,22 @@ impl Host {
                     },
                     scale,
                 )
-                .with_outer_geometry(state.metrics.outer_position, state.metrics.outer_size);
-                state.metrics = metrics.clone();
+                .with_outer_geometry(state.metrics().outer_position, state.metrics().outer_size);
+                state.set_metrics(metrics.clone());
                 self.events.push(Event::Resized(metrics));
             }
             Command::SetMinInnerSize { id, .. } | Command::SetMaxInnerSize { id, .. } => {
                 self.require_window(id)?;
             }
             Command::SetFullscreen { id, fullscreen } => {
-                self.state_mut(id)?.fullscreen = !matches!(fullscreen, Fullscreen::None);
+                self.state_mut(id)?
+                    .set_fullscreen(!matches!(fullscreen, Fullscreen::None));
             }
             Command::SetLevel { id, .. } => {
                 self.require_window(id)?;
             }
             Command::SetTheme { id, theme } => {
-                self.state_mut(id)?.theme = theme;
+                self.state_mut(id)?.set_theme(theme);
                 self.events.push(Event::ThemeChanged { id, theme });
             }
             Command::RequestDraw { id } => {
@@ -276,7 +280,7 @@ impl Host {
         metrics: Metrics,
     ) -> Result<Effect> {
         let id = metrics.id;
-        self.state_mut(id)?.metrics = metrics;
+        self.state_mut(id)?.set_metrics(metrics);
 
         let mut commands = Vec::new();
         let mut actions = Vec::new();
@@ -393,7 +397,7 @@ impl Host {
 }
 
 fn fake_state_from_descriptor(id: Id, descriptor: &Descriptor) -> State {
-    let logical_size = descriptor.inner_size.unwrap_or(Size {
+    let logical_size = descriptor.inner_size().unwrap_or(Size {
         width: 800.0,
         height: 600.0,
     });
@@ -404,24 +408,24 @@ fn fake_state_from_descriptor(id: Id, descriptor: &Descriptor) -> State {
             width: logical_size.width.round().max(0.0) as u32,
             height: logical_size.height.round().max(0.0) as u32,
         },
-        outer_position: descriptor.position,
+        outer_position: descriptor.position(),
         outer_size: None,
         scale_factor: 1.0,
         safe_area: Insets::default(),
     };
-    State {
+    WindowSnapshot::from_seed(WindowSnapshotSeed {
         id,
-        title: descriptor.title.clone(),
-        name: descriptor.name.clone(),
+        title: descriptor.title().to_owned(),
+        name: descriptor.name().map(str::to_owned),
         metrics,
-        position: descriptor.position,
+        position: descriptor.position(),
         focused: false,
-        visible: Some(descriptor.visible),
+        visible: Some(descriptor.visible()),
         minimized: Some(false),
         maximized: false,
         occluded: Some(false),
-        fullscreen: !matches!(descriptor.fullscreen, Fullscreen::None),
-        theme: descriptor.theme,
-        role: descriptor.role.clone(),
-    }
+        fullscreen: !matches!(descriptor.fullscreen(), Fullscreen::None),
+        theme: descriptor.theme(),
+        role: descriptor.role().clone(),
+    })
 }

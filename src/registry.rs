@@ -151,7 +151,7 @@ impl Access for Ref<'_> {
     }
 
     fn metrics(&self) -> Metrics {
-        self.instance.state.metrics.clone()
+        self.instance.state.metrics().clone()
     }
 
     fn handle(&self) -> Result<Handle> {
@@ -242,7 +242,7 @@ impl Registry {
         let name = name.as_ref();
         self.instances
             .values()
-            .find(|instance| instance.state.name.as_deref() == Some(name))
+            .find(|instance| instance.state.name() == Some(name))
             .map(Instance::id)
     }
 

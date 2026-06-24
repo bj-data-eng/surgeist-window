@@ -5,10 +5,11 @@ use super::winit_adapter::{
     location_from_winit,
 };
 use super::*;
+use crate::descriptor::WindowSnapshotSeed;
 use std::{collections::HashMap, time::Instant};
 
 fn state(id: Id) -> State {
-    State {
+    WindowSnapshot::from_seed(WindowSnapshotSeed {
         id,
         title: String::from("Test"),
         name: Some(String::from("surgeist-test")),
@@ -29,7 +30,7 @@ fn state(id: Id) -> State {
         fullscreen: false,
         theme: Some(Theme::Dark),
         role: Role::Root,
-    }
+    })
 }
 
 #[test]
@@ -247,37 +248,76 @@ fn missing_live_handle_reports_stable_error() {
 }
 
 #[test]
+fn window_request_builds_authored_creation_intent_without_public_field_mutation() {
+    let request = WindowRequest::builder("main")
+        .title("Main Window")
+        .inner_size(size(320, 240))
+        .hidden()
+        .borderless()
+        .build();
+
+    assert_eq!(request.name(), Some("main"));
+    assert_eq!(request.title(), "Main Window");
+    assert_eq!(request.inner_size(), Some(size(320, 240)));
+    assert!(!request.visible());
+    assert_eq!(request.fullscreen(), Fullscreen::Borderless);
+    assert_eq!(request.role().kind(), RoleKind::Root);
+}
+
+#[test]
+fn window_snapshot_is_observed_runtime_state_built_through_constructor() {
+    let metrics = Metrics::from_physical_size(
+        Id::from_u64(7),
+        PhysicalSize {
+            width: 640,
+            height: 480,
+        },
+        2.0,
+    );
+    let snapshot = WindowSnapshot::new(Id::from_u64(7), "Main Window", metrics.clone())
+        .named("main")
+        .with_visible(true)
+        .focused(true);
+
+    assert_eq!(snapshot.id(), Id::from_u64(7));
+    assert_eq!(snapshot.title(), "Main Window");
+    assert_eq!(snapshot.name(), Some("main"));
+    assert_eq!(snapshot.metrics(), &metrics);
+    assert!(snapshot.is_visible());
+    assert!(snapshot.is_focused());
+}
+
+#[test]
 fn descriptor_converts_to_winit_attributes() {
-    let descriptor = Descriptor {
-        title: String::from("Window"),
-        name: Some(String::from("surgeist-window")),
-        position: Some(Point { x: 12.0, y: 24.0 }),
-        inner_size: Some(Size {
+    let descriptor = WindowRequest::builder("surgeist-window")
+        .title("Window")
+        .position(Point { x: 12.0, y: 24.0 })
+        .inner_size(Size {
             width: 800.0,
             height: 600.0,
-        }),
-        min_inner_size: Some(Size {
+        })
+        .min_inner_size(Size {
             width: 320.0,
             height: 240.0,
-        }),
-        max_inner_size: Some(Size {
+        })
+        .max_inner_size(Size {
             width: 1600.0,
             height: 1200.0,
-        }),
-        resizable: false,
-        controls: Controls {
+        })
+        .fixed()
+        .controls(Controls {
             close: true,
             minimize: false,
             maximize: true,
-        },
-        decorations: false,
-        transparent: true,
-        visible: false,
-        fullscreen: Fullscreen::Borderless,
-        level: Level::AlwaysOnTop,
-        theme: Some(Theme::Dark),
-        role: Role::Root,
-    };
+        })
+        .decorations(false)
+        .transparent(true)
+        .hidden()
+        .borderless()
+        .level(Level::AlwaysOnTop)
+        .theme(Some(Theme::Dark))
+        .root()
+        .build();
 
     let attributes = descriptor.to_winit_attributes().unwrap();
 
@@ -327,10 +367,9 @@ fn descriptor_converts_to_winit_attributes() {
 
 #[test]
 fn exclusive_fullscreen_requires_native_video_mode() {
-    let descriptor = Descriptor {
-        fullscreen: Fullscreen::Exclusive,
-        ..Descriptor::default()
-    };
+    let descriptor = WindowRequest::builder("exclusive")
+        .fullscreen(Fullscreen::Exclusive)
+        .build();
 
     let error = descriptor.to_winit_attributes().unwrap_err();
 
@@ -339,13 +378,9 @@ fn exclusive_fullscreen_requires_native_video_mode() {
 
 #[test]
 fn native_descriptor_rejects_unimplemented_roles() {
-    let descriptor = Descriptor {
-        role: Role::Dialog {
-            parent: Id::from_u64(1),
-            modality: Modality::Window,
-        },
-        ..Descriptor::default()
-    };
+    let descriptor = WindowRequest::builder("dialog")
+        .dialog(Id::from_u64(1))
+        .build();
 
     let error = descriptor.to_winit_attributes().unwrap_err();
 
@@ -355,13 +390,9 @@ fn native_descriptor_rejects_unimplemented_roles() {
 
 #[test]
 fn window_modeling_baseline_descriptor_rejects_non_root_roles_for_winit_attributes() {
-    let descriptor = Descriptor {
-        role: Role::Dialog {
-            parent: Id::from_u64(1),
-            modality: Modality::Window,
-        },
-        ..Descriptor::default()
-    };
+    let descriptor = WindowRequest::builder("dialog")
+        .dialog(Id::from_u64(1))
+        .build();
 
     let error = descriptor
         .to_winit_attributes()
@@ -372,10 +403,9 @@ fn window_modeling_baseline_descriptor_rejects_non_root_roles_for_winit_attribut
 
 #[test]
 fn window_modeling_baseline_descriptor_rejects_exclusive_fullscreen_for_winit_attributes() {
-    let descriptor = Descriptor {
-        fullscreen: Fullscreen::Exclusive,
-        ..Descriptor::default()
-    };
+    let descriptor = WindowRequest::builder("exclusive")
+        .fullscreen(Fullscreen::Exclusive)
+        .build();
 
     let error = descriptor
         .to_winit_attributes()
@@ -511,21 +541,20 @@ fn ime_event_converts_from_winit() {
 fn fake_host_applies_open_and_state_commands() {
     let mut host = testing::Host::new();
     host.apply(Command::Open {
-        descriptor: Descriptor {
-            title: String::from("Fake"),
-            position: Some(Point { x: 11.0, y: 22.0 }),
-            inner_size: Some(Size {
+        descriptor: WindowRequest::builder("fake")
+            .title("Fake")
+            .position(Point { x: 11.0, y: 22.0 })
+            .inner_size(Size {
                 width: 320.0,
                 height: 240.0,
-            }),
-            theme: Some(Theme::Light),
-            ..Descriptor::default()
-        },
+            })
+            .theme(Some(Theme::Light))
+            .build(),
     })
     .unwrap();
 
     let id = match &host.events()[0] {
-        HostEvent::Created(state) => state.id,
+        HostEvent::Created(state) => state.id(),
         event => panic!("expected Created event, got {event:?}"),
     };
 
@@ -546,17 +575,17 @@ fn fake_host_applies_open_and_state_commands() {
     .unwrap();
 
     let state = host.registry().get(id).unwrap();
-    assert_eq!(state.instance.state.title, "Renamed");
-    assert_eq!(state.instance.state.visible, Some(false));
+    assert_eq!(state.instance.state.title(), "Renamed");
+    assert_eq!(state.instance.state.visible(), Some(false));
     assert_eq!(
-        state.instance.state.metrics.logical_size,
+        state.instance.state.metrics().logical_size,
         Size {
             width: 640.0,
             height: 480.0,
         }
     );
     assert_eq!(
-        state.instance.state.metrics.outer_position,
+        state.instance.state.metrics().outer_position,
         Some(Point { x: 11.0, y: 22.0 })
     );
     assert!(
@@ -574,7 +603,7 @@ fn fake_host_exercises_draw_and_close_contract() {
     })
     .unwrap();
     let id = match &host.events()[0] {
-        HostEvent::Created(state) => state.id,
+        HostEvent::Created(state) => state.id(),
         event => panic!("expected Created event, got {event:?}"),
     };
 
@@ -646,7 +675,7 @@ fn fake_host_deduplicates_cursor_updates() {
     })
     .unwrap();
     let id = match &host.events()[0] {
-        HostEvent::Created(state) => state.id,
+        HostEvent::Created(state) => state.id(),
         event => panic!("expected Created event, got {event:?}"),
     };
 
@@ -683,7 +712,7 @@ fn fake_host_records_ime_request_order() {
     })
     .unwrap();
     let id = match &host.events()[0] {
-        HostEvent::Created(state) => state.id,
+        HostEvent::Created(state) => state.id(),
         event => panic!("expected Created event, got {event:?}"),
     };
     let config = ImeConfig {
@@ -733,7 +762,7 @@ fn fake_host_emits_lifecycle_events() {
     })
     .unwrap();
     let id = match &host.events()[0] {
-        HostEvent::Created(state) => state.id,
+        HostEvent::Created(state) => state.id(),
         event => panic!("expected Created event, got {event:?}"),
     };
     host.clear();
@@ -755,7 +784,7 @@ fn fake_host_forwards_accessibility_events() {
     })
     .unwrap();
     let id = match &host.events()[0] {
-        HostEvent::Created(state) => state.id,
+        HostEvent::Created(state) => state.id(),
         event => panic!("expected Created event, got {event:?}"),
     };
     host.clear();
@@ -824,48 +853,48 @@ fn dsl_open_builder_lowers_to_descriptor_and_command() {
 
     let descriptor = open.descriptor().clone();
 
-    assert_eq!(descriptor.name.as_deref(), Some("inspector"));
-    assert_eq!(descriptor.title, "Inspector");
-    assert_eq!(descriptor.position, Some(Point { x: 12.0, y: 24.0 }));
+    assert_eq!(descriptor.name(), Some("inspector"));
+    assert_eq!(descriptor.title(), "Inspector");
+    assert_eq!(descriptor.position(), Some(Point { x: 12.0, y: 24.0 }));
     assert_eq!(
-        descriptor.inner_size,
+        descriptor.inner_size(),
         Some(Size {
             width: 420.0,
             height: 640.0,
         })
     );
     assert_eq!(
-        descriptor.min_inner_size,
+        descriptor.min_inner_size(),
         Some(Size {
             width: 320.0,
             height: 240.0,
         })
     );
     assert_eq!(
-        descriptor.max_inner_size,
+        descriptor.max_inner_size(),
         Some(Size {
             width: 1200.0,
             height: 900.0,
         })
     );
-    assert!(!descriptor.resizable);
+    assert!(!descriptor.resizable());
     assert_eq!(
-        descriptor.controls,
+        descriptor.controls(),
         Controls {
             close: true,
             minimize: false,
             maximize: false,
         }
     );
-    assert!(!descriptor.decorations);
-    assert!(descriptor.transparent);
-    assert!(!descriptor.visible);
-    assert_eq!(descriptor.fullscreen, Fullscreen::Borderless);
-    assert_eq!(descriptor.level, Level::AlwaysOnTop);
-    assert_eq!(descriptor.theme, Some(Theme::Dark));
+    assert!(!descriptor.decorations());
+    assert!(descriptor.transparent());
+    assert!(!descriptor.visible());
+    assert_eq!(descriptor.fullscreen(), Fullscreen::Borderless);
+    assert_eq!(descriptor.level(), Level::AlwaysOnTop);
+    assert_eq!(descriptor.theme(), Some(Theme::Dark));
     assert_eq!(
-        descriptor.role,
-        Role::Tool {
+        descriptor.role(),
+        &Role::Tool {
             parent: Some(parent),
         }
     );
@@ -875,30 +904,30 @@ fn dsl_open_builder_lowers_to_descriptor_and_command() {
 
 #[test]
 fn dsl_open_builder_lowers_role_theme_and_control_variants() {
-    assert_eq!(Open::unnamed().descriptor().name, None);
+    assert_eq!(Open::unnamed().descriptor().name(), None);
     assert_eq!(
-        open("first").name("second").descriptor().name.as_deref(),
+        open("first").name("second").descriptor().name(),
         Some("second")
     );
-    assert_eq!(open("root").root().descriptor().role, Role::Root);
+    assert_eq!(open("root").root().descriptor().role(), &Role::Root);
     assert_eq!(
         open("dialog")
             .dialog(Id::from_u64(4))
             .modal(Modality::App)
             .descriptor()
-            .role,
-        Role::Dialog {
+            .role(),
+        &Role::Dialog {
             parent: Id::from_u64(4),
             modality: Modality::App,
         }
     );
     assert_eq!(
-        open("popup").popup(Id::from_u64(8)).descriptor().role,
-        Role::Popup {
+        open("popup").popup(Id::from_u64(8)).descriptor().role(),
+        &Role::Popup {
             parent: Id::from_u64(8),
         }
     );
-    assert_eq!(open("theme").theme(None).descriptor().theme, None);
+    assert_eq!(open("theme").theme(None).descriptor().theme(), None);
     assert_eq!(
         Controls::from(controls().all(false).close(true)),
         Controls {
@@ -1158,11 +1187,11 @@ fn dsl_app_queues_startup_open_commands() {
     assert_eq!(window_loop.startup.len(), 2);
     assert!(matches!(
         &window_loop.startup[0],
-        Command::Open { descriptor } if descriptor.name.as_deref() == Some("main")
+        Command::Open { descriptor } if descriptor.name() == Some("main")
     ));
     assert!(matches!(
         &window_loop.startup[1],
-        Command::Open { descriptor } if descriptor.name.as_deref() == Some("tools")
+        Command::Open { descriptor } if descriptor.name() == Some("tools")
     ));
 }
 
@@ -1181,11 +1210,11 @@ fn dsl_startup_commands_are_inserted_once_before_first_resume_callback() {
     assert_eq!(runner.commands.len(), 2);
     assert!(matches!(
         &runner.commands[0],
-        Command::Open { descriptor } if descriptor.name.as_deref() == Some("main")
+        Command::Open { descriptor } if descriptor.name() == Some("main")
     ));
     assert!(matches!(
         &runner.commands[1],
-        Command::Open { descriptor } if descriptor.name.as_deref() == Some("tools")
+        Command::Open { descriptor } if descriptor.name() == Some("tools")
     ));
 }
 
@@ -1265,7 +1294,7 @@ fn dsl_lifecycle_dispatch_drains_commands_before_returning_action() {
     assert_eq!(action, Effect::Exit);
     assert!(matches!(
         host.events().first(),
-        Some(HostEvent::Created(state)) if state.name.as_deref() == Some("child")
+        Some(HostEvent::Created(state)) if state.name() == Some("child")
     ));
 }
 
@@ -1387,7 +1416,7 @@ fn lifecycle_startup_open_delivers_ready_and_draw() {
         fn ready(&mut self, win: &mut Ready<'_>) -> Result<()> {
             self.ready.push(win.id());
             self.ready_size = Some(win.metrics().logical_size);
-            assert_eq!(win.state().name.as_deref(), Some("main"));
+            assert_eq!(win.state().name(), Some("main"));
             win.draw();
             Ok(())
         }
@@ -1462,7 +1491,7 @@ fn lifecycle_scopes_share_common_window_surface() {
     let mut host = testing::Host::new();
     host.apply(open("scope").title("Scope")).unwrap();
     let id = match host.events().last().unwrap() {
-        HostEvent::Created(state) => state.id,
+        HostEvent::Created(state) => state.id(),
         event => panic!("expected created event, got {event:?}"),
     };
     let mut probe = Probe { observed: None };
@@ -1490,7 +1519,7 @@ fn lifecycle_scopes_share_common_window_surface() {
         host.events()
             .iter()
             .find_map(|event| match event {
-                HostEvent::Created(state) if state.id == id => Some(state.name.as_deref()),
+                HostEvent::Created(state) if state.id() == id => Some(state.name()),
                 _ => None,
             })
             .flatten(),
@@ -1536,7 +1565,7 @@ fn lifecycle_resize_input_close_and_closed_are_scoped() {
 
         fn closed(&mut self, closed: &mut Closed<'_>) -> Result<()> {
             self.closed.push(closed.id());
-            assert_eq!(closed.state().name.as_deref(), Some("main"));
+            assert_eq!(closed.state().name(), Some("main"));
             Ok(())
         }
     }

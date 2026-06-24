@@ -25,7 +25,7 @@ impl EventKind {
     #[must_use]
     pub fn id(&self) -> Id {
         match self {
-            Self::Created(state) => state.id,
+            Self::Created(state) => state.id(),
             Self::Destroyed(id)
             | Self::Suspended(id)
             | Self::Resumed(id)

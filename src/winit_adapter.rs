@@ -1,4 +1,7 @@
-use super::{command::Action, context::resolve_actions_with, event::EventKind, *};
+use super::{
+    command::Action, context::resolve_actions_with, descriptor::WindowSnapshotSeed,
+    event::EventKind, *,
+};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -126,8 +129,7 @@ impl<H: Handler> WinitRunner<H> {
         self.registry
             .get(id)
             .map(|instance| {
-                instance.instance.state.visible.unwrap_or(true)
-                    && !instance.instance.state.occluded.unwrap_or(false)
+                instance.instance.state.is_visible() && !instance.instance.state.is_occluded()
             })
             .unwrap_or(false)
     }
@@ -361,13 +363,14 @@ impl<H: Handler> WinitRunner<H> {
     ) -> Result<()> {
         match command {
             Command::Open { descriptor } => {
-                validate_name(&self.registry, descriptor.name.as_deref())?;
+                validate_name(&self.registry, descriptor.name())?;
                 #[cfg(feature = "accessibility")]
-                let requested_visible = descriptor.visible;
+                let requested_visible = descriptor.visible();
                 #[cfg(feature = "accessibility")]
-                let native_descriptor = Descriptor {
-                    visible: false,
-                    ..descriptor.clone()
+                let native_descriptor = {
+                    let mut native_descriptor = descriptor.clone();
+                    native_descriptor.set_visible(false);
+                    native_descriptor
                 };
                 #[cfg(not(feature = "accessibility"))]
                 let native_descriptor = descriptor.clone();
@@ -411,7 +414,7 @@ impl<H: Handler> WinitRunner<H> {
                 let handle = self.handle(id)?;
                 handle.winit().set_title(&title);
                 if let Some(instance) = self.registry.get_mut(id) {
-                    instance.state.title = title;
+                    instance.state.set_title(title);
                 }
             }
             Command::SetPosition { id, position } => {
@@ -423,7 +426,7 @@ impl<H: Handler> WinitRunner<H> {
                 let handle = self.handle(id)?;
                 handle.winit().set_visible(visible);
                 if let Some(instance) = self.registry.get_mut(id) {
-                    instance.state.visible = Some(visible);
+                    instance.state.set_visible(Some(visible));
                 }
                 if visible {
                     self.request_pending_draws();
@@ -479,7 +482,7 @@ impl<H: Handler> WinitRunner<H> {
             Command::SetTheme { id, theme } => {
                 self.handle(id)?.winit().set_theme(theme.map(Into::into));
                 if let Some(instance) = self.registry.get_mut(id) {
-                    instance.state.theme = theme;
+                    instance.state.set_theme(theme);
                 }
             }
             Command::SetCursor { id, cursor } => {
@@ -694,7 +697,7 @@ impl<H: Handler> winit::application::ApplicationHandler<UserEvent> for WinitRunn
                     y: f64::from(position.y),
                 };
                 if let Some(instance) = self.registry.get_mut(id) {
-                    instance.state.position = Some(point);
+                    instance.state.set_position(Some(point));
                 }
                 self.deliver_event(
                     event_loop,
@@ -707,20 +710,20 @@ impl<H: Handler> winit::application::ApplicationHandler<UserEvent> for WinitRunn
             }
             winit::event::WindowEvent::Focused(focused) => {
                 if let Some(instance) = self.registry.get_mut(id) {
-                    instance.state.focused = focused;
+                    instance.state.set_focused(focused);
                 }
                 self.deliver_event(event_loop, id, EventKind::Focused { id, focused });
             }
             winit::event::WindowEvent::ThemeChanged(theme) => {
                 let theme = Some(theme.into());
                 if let Some(instance) = self.registry.get_mut(id) {
-                    instance.state.theme = theme;
+                    instance.state.set_theme(theme);
                 }
                 self.deliver_event(event_loop, id, EventKind::ThemeChanged { id, theme });
             }
             winit::event::WindowEvent::Occluded(occluded) => {
                 if let Some(instance) = self.registry.get_mut(id) {
-                    instance.state.occluded = Some(occluded);
+                    instance.state.set_occluded(Some(occluded));
                 }
                 if !occluded {
                     self.request_pending_draws();
@@ -973,7 +976,7 @@ impl<H: Handler> WinitRunner<H> {
                 existing.as_ref().and_then(|metrics| metrics.outer_size),
             );
         if let Some(instance) = self.registry.get_mut(id) {
-            instance.state.metrics = metrics.clone();
+            instance.state.set_metrics(metrics.clone());
         }
         metrics
     }
@@ -989,7 +992,7 @@ impl<H: Handler> WinitRunner<H> {
                 existing.as_ref().and_then(|metrics| metrics.outer_size),
             );
         if let Some(instance) = self.registry.get_mut(id) {
-            instance.state.metrics = metrics.clone();
+            instance.state.set_metrics(metrics.clone());
         }
         metrics
     }
@@ -1046,21 +1049,21 @@ pub(crate) fn state_from_winit(
         scale_factor,
     )
     .with_outer_geometry(outer_position, outer_size);
-    State {
+    WindowSnapshot::from_seed(WindowSnapshotSeed {
         id,
-        title: descriptor.title.clone(),
-        name: descriptor.name.clone(),
+        title: descriptor.title().to_owned(),
+        name: descriptor.name().map(str::to_owned),
         position: outer_position,
         focused: window.has_focus(),
-        visible: Some(descriptor.visible),
+        visible: Some(descriptor.visible()),
         minimized: None,
         maximized: window.is_maximized(),
         occluded: None,
         fullscreen: window.fullscreen().is_some(),
-        theme: descriptor.theme,
-        role: descriptor.role.clone(),
+        theme: descriptor.theme(),
+        role: descriptor.role().clone(),
         metrics,
-    }
+    })
 }
 
 fn path_to_string(path: PathBuf) -> String {
