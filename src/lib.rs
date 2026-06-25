@@ -42,7 +42,7 @@ pub use descriptor::{
     WindowRequestBuilder, WindowSnapshot,
 };
 pub use dsl::{
-    App, Close, Closed, ControlsBuilder, Frame, Input, Open, Ready, Resize, Scope, Selector,
+    App, Close, Closed, ControlsBuilder, Event, Frame, Input, Open, Ready, Resize, Scope, Selector,
     Target, app, controls, open, point, rect, size,
 };
 pub use error::{Error, ErrorCode, Result};

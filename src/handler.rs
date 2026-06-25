@@ -1,4 +1,4 @@
-use super::{Close, Closed, Context, Frame, Input, Ready, Resize, Result};
+use super::{Close, Closed, Context, Event, Frame, Input, Ready, Resize, Result};
 
 /// Consumer callbacks for native window events.
 pub trait Handler {
@@ -19,6 +19,10 @@ pub trait Handler {
     }
 
     fn input(&mut self, _input: &mut Input<'_>) -> Result<()> {
+        Ok(())
+    }
+
+    fn event(&mut self, _event: &mut Event<'_>) -> Result<()> {
         Ok(())
     }
 

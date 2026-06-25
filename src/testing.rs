@@ -1,6 +1,10 @@
 use super::{
-    command::Action, context::resolve_actions_with, descriptor::WindowSnapshotSeed,
-    winit_adapter::validate_name, *,
+    command::Action,
+    context::resolve_actions_with,
+    descriptor::WindowSnapshotSeed,
+    dsl::Event as EventScope,
+    winit_adapter::{NativeTransitionRoute, native_transition_route, validate_name},
+    *,
 };
 use std::{collections::HashMap, time::Instant};
 
@@ -277,6 +281,57 @@ impl Host {
             let mut input = Input::new(input, context);
             handler.input(&mut input)?;
             input.context_mut().resolved_action()
+        };
+
+        for command in commands {
+            self.apply(command)?;
+        }
+
+        Ok(action.into())
+    }
+
+    pub fn dispatch_native_transition<H: Handler>(
+        &mut self,
+        handler: &mut H,
+        transition: NativeEventTransition,
+    ) -> Result<Effect> {
+        let event = transition.event().cloned();
+        if let Some(event) = &event
+            && (matches!(
+                event,
+                EventKind::Resized(_) | EventKind::ScaleFactorChanged(_)
+            ) || native_transition_route(event) == NativeTransitionRoute::Input)
+        {
+            return Err(Error::new(
+                ErrorCode::UnsupportedFeature,
+                "specialized native transitions must use specialized fake dispatch",
+            )
+            .with_id(event.id()));
+        }
+
+        if let Some(patch) = transition.patch().cloned() {
+            let id = patch.id();
+            self.require_window(id)?;
+            let state = self.state_mut(id)?;
+            let _ = patch.apply(state)?;
+        }
+
+        let Some(event) = event else {
+            return Ok(Effect::Wait);
+        };
+        if transition.patch().is_none() {
+            self.require_window(event.id())?;
+        }
+
+        self.events.push(Event::from(event.clone()));
+
+        let mut commands = Vec::new();
+        let mut actions = Vec::new();
+        let action = {
+            let context = Context::new(&mut self.registry, &mut commands, &mut actions, None);
+            let mut event = EventScope::new(event, context);
+            handler.event(&mut event)?;
+            event.context_mut().resolved_action()
         };
 
         for command in commands {

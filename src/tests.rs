@@ -8,7 +8,7 @@ use super::winit_adapter::{
 };
 use super::*;
 use crate::descriptor::WindowSnapshotSeed;
-use std::{collections::HashMap, time::Instant};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Instant};
 
 fn state(id: Id) -> WindowSnapshot {
     WindowSnapshot::from_seed(WindowSnapshotSeed {
@@ -544,6 +544,265 @@ fn native_transition_route_sends_lifecycle_events_to_event_delivery() {
         native_transition_route(&event),
         NativeTransitionRoute::Event
     );
+}
+
+#[test]
+fn native_event_delivery_invokes_handler_event_callback_for_modeled_events() {
+    #[derive(Default)]
+    struct Record {
+        events: Vec<EventKind>,
+        state_observed: bool,
+    }
+
+    struct Recorder(Rc<RefCell<Record>>);
+
+    impl Handler for Recorder {
+        fn event(&mut self, event: &mut Event<'_>) -> Result<()> {
+            let mut record = self.0.borrow_mut();
+            record.events.push(event.event().clone());
+            record.state_observed = event.state().is_some();
+            event.context_mut().open(open("child"));
+            event.again();
+            Ok(())
+        }
+    }
+
+    let record = Rc::new(RefCell::new(Record::default()));
+    let mut window_loop = Loop::new(Recorder(record.clone()));
+    let id = window_loop.registry.reserve_id();
+    window_loop.registry.insert(Instance::new(id, state(id)));
+    let mut runner = WinitRunner::from_loop(window_loop);
+    let event = EventKind::Focused { id, focused: true };
+
+    let action = runner
+        .call_with_event_for_test(event.clone())
+        .expect("generic event callback should run");
+
+    assert_eq!(record.borrow().events, vec![event]);
+    assert!(record.borrow().state_observed);
+    assert_eq!(action, Action::DrawNow(id));
+    assert!(matches!(
+        runner.commands.as_slice(),
+        [Command::Open { request }] if request.name() == Some("child")
+    ));
+}
+
+#[test]
+fn created_event_close_skips_ready_delivery_when_window_is_destroyed() {
+    #[derive(Default)]
+    struct Record {
+        created: usize,
+        ready: usize,
+    }
+
+    struct Recorder(Rc<RefCell<Record>>);
+
+    impl Handler for Recorder {
+        fn event(&mut self, event: &mut Event<'_>) -> Result<()> {
+            if matches!(event.event(), EventKind::Created(_)) {
+                self.0.borrow_mut().created += 1;
+                event.close();
+            }
+            Ok(())
+        }
+
+        fn ready(&mut self, ready: &mut Ready<'_>) -> Result<()> {
+            self.0.borrow_mut().ready += 1;
+            let _ = ready.state();
+            Ok(())
+        }
+    }
+
+    let record = Rc::new(RefCell::new(Record::default()));
+    let mut window_loop = Loop::new(Recorder(record.clone()));
+    let id = window_loop.registry.reserve_id();
+    let window_state = state(id);
+    window_loop
+        .registry
+        .insert(Instance::new(id, window_state.clone()));
+    let mut runner = WinitRunner::from_loop(window_loop);
+
+    runner
+        .deliver_created_then_ready_for_test(window_state)
+        .expect("created callback should be delivered without ready after close");
+
+    assert_eq!(record.borrow().created, 1);
+    assert_eq!(record.borrow().ready, 0);
+    assert!(!runner.registry_contains_for_test(id));
+}
+
+#[test]
+fn fake_host_native_transition_dispatch_matches_native_event_callback_contract() {
+    #[derive(Default)]
+    struct Recorder {
+        event: Option<EventKind>,
+        focused: Option<bool>,
+        calls: usize,
+    }
+
+    impl Handler for Recorder {
+        fn event(&mut self, event: &mut Event<'_>) -> Result<()> {
+            self.calls += 1;
+            self.event = Some(event.event().clone());
+            self.focused = event.state().map(WindowSnapshot::is_focused);
+            event.draw();
+            Ok(())
+        }
+    }
+
+    let mut host = testing::Host::new();
+    host.apply(open("main")).unwrap();
+    let id = host.window_id("main").unwrap();
+    host.clear();
+    let mut handler = Recorder::default();
+
+    let effect = host
+        .dispatch_native_transition(&mut handler, NativeEventTransition::focused(id, true))
+        .expect("native transition should dispatch through generic event callback");
+
+    assert_eq!(
+        handler.event,
+        Some(EventKind::Focused { id, focused: true })
+    );
+    assert_eq!(handler.focused, Some(true));
+    assert_eq!(host.events(), &[HostEvent::Focused { id, focused: true }]);
+    assert_eq!(effect, Effect::Draw(id));
+
+    host.clear();
+    let effect = host
+        .dispatch_native_transition(
+            &mut handler,
+            NativeEventTransition::new(Some(WindowStatePatch::visible(id, false)), None),
+        )
+        .expect("patch-only native transition should still apply state");
+
+    assert_eq!(effect, Effect::Wait);
+    assert_eq!(handler.calls, 1);
+    assert!(host.events().is_empty());
+    assert_eq!(
+        host.registry()
+            .get(id)
+            .map(|window| window.instance.state().visible()),
+        Some(Some(false))
+    );
+}
+
+#[test]
+fn specialized_resize_input_close_callbacks_do_not_double_deliver_generic_event() {
+    #[derive(Default)]
+    struct Recorder {
+        generic: usize,
+        resize: usize,
+        input: usize,
+        close: usize,
+        closed: usize,
+    }
+
+    impl Handler for Recorder {
+        fn event(&mut self, _event: &mut Event<'_>) -> Result<()> {
+            self.generic += 1;
+            Ok(())
+        }
+
+        fn resize(&mut self, _win: &mut Resize<'_>) -> Result<()> {
+            self.resize += 1;
+            Ok(())
+        }
+
+        fn input(&mut self, _input: &mut Input<'_>) -> Result<()> {
+            self.input += 1;
+            Ok(())
+        }
+
+        fn close(&mut self, close: &mut Close<'_>) -> Result<()> {
+            self.close += 1;
+            close.close();
+            Ok(())
+        }
+
+        fn closed(&mut self, _closed: &mut Closed<'_>) -> Result<()> {
+            self.closed += 1;
+            Ok(())
+        }
+    }
+
+    let mut host = testing::Host::new();
+    host.apply(open("main")).unwrap();
+    let id = host.window_id("main").unwrap();
+    let mut handler = Recorder::default();
+
+    host.dispatch_resize(
+        &mut handler,
+        Metrics::from_physical_size(
+            id,
+            PhysicalSize {
+                width: 400,
+                height: 200,
+            },
+            1.0,
+        ),
+    )
+    .unwrap();
+    host.dispatch_input(
+        &mut handler,
+        InputEvent::Modifiers {
+            id,
+            modifiers: ModifierState::default(),
+        },
+    )
+    .unwrap();
+    host.dispatch_close(&mut handler, id).unwrap();
+    host.dispatch_closed(&mut handler, id).unwrap();
+
+    let mouse_moved_error = host
+        .dispatch_native_transition(
+            &mut handler,
+            NativeEventTransition::mouse_moved(
+                id,
+                Point { x: 12.0, y: 24.0 },
+                PhysicalPoint { x: 12, y: 24 },
+                None,
+                ModifierState::default(),
+            ),
+        )
+        .expect_err("fake native transition dispatch must not generic-deliver input");
+    assert_eq!(mouse_moved_error.code, ErrorCode::UnsupportedFeature);
+
+    let resized_error = host
+        .dispatch_native_transition(
+            &mut handler,
+            NativeEventTransition::resized(Metrics::from_physical_size(
+                id,
+                PhysicalSize {
+                    width: 500,
+                    height: 300,
+                },
+                1.0,
+            )),
+        )
+        .expect_err("fake native transition dispatch must not generic-deliver resize");
+    assert_eq!(resized_error.code, ErrorCode::UnsupportedFeature);
+
+    let scale_error = host
+        .dispatch_native_transition(
+            &mut handler,
+            NativeEventTransition::scale_factor_changed(Metrics::from_physical_size(
+                id,
+                PhysicalSize {
+                    width: 500,
+                    height: 300,
+                },
+                2.0,
+            )),
+        )
+        .expect_err("fake native transition dispatch must not generic-deliver scale changes");
+    assert_eq!(scale_error.code, ErrorCode::UnsupportedFeature);
+
+    assert_eq!(handler.resize, 1);
+    assert_eq!(handler.input, 1);
+    assert_eq!(handler.close, 1);
+    assert_eq!(handler.closed, 1);
+    assert_eq!(handler.generic, 0);
 }
 
 #[test]

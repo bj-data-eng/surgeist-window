@@ -1,7 +1,7 @@
 use super::{
-    Command, Context, Controls, Cursor, CursorGrab, Error, ErrorCode, Fullscreen, Handle, Id,
-    ImeRequest, InputEvent, Level, Metrics, Modality, Point, Proxy, Rect, Ref, Result, Role, Size,
-    Theme, WindowRequest, WindowRequestBuilder, WindowSnapshot, command::Action,
+    Command, Context, Controls, Cursor, CursorGrab, Error, ErrorCode, EventKind, Fullscreen,
+    Handle, Id, ImeRequest, InputEvent, Level, Metrics, Modality, Point, Proxy, Rect, Ref, Result,
+    Role, Size, Theme, WindowRequest, WindowRequestBuilder, WindowSnapshot, command::Action,
 };
 use std::{collections::HashSet, time::Instant};
 
@@ -530,6 +530,11 @@ pub struct Input<'a> {
     context: Context<'a>,
 }
 
+pub struct Event<'a> {
+    event: EventKind,
+    context: Context<'a>,
+}
+
 pub struct Close<'a> {
     id: Id,
     context: Context<'a>,
@@ -823,6 +828,61 @@ impl<'a> Input<'a> {
 
     pub fn window(&mut self) -> Target<'_> {
         self.context.window(self.id())
+    }
+
+    pub fn draw(&mut self) -> &mut Self {
+        self.context.draw(self.id());
+        self
+    }
+
+    pub fn again(&mut self) -> &mut Self {
+        self.context.again(self.id());
+        self
+    }
+
+    pub fn at(&mut self, time: Instant) -> &mut Self {
+        self.context.at(self.id(), time);
+        self
+    }
+
+    pub fn close(&mut self) -> &mut Self {
+        self.context.request(Action::CloseRequested(self.id()));
+        self
+    }
+
+    pub fn exit(&mut self) -> &mut Self {
+        self.context.request(Action::Exit);
+        self
+    }
+}
+
+impl<'a> Event<'a> {
+    pub(crate) fn new(event: EventKind, context: Context<'a>) -> Self {
+        Self { event, context }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> Id {
+        self.event.id()
+    }
+
+    #[must_use]
+    pub fn event(&self) -> &EventKind {
+        &self.event
+    }
+
+    #[must_use]
+    pub fn state(&self) -> Option<&WindowSnapshot> {
+        self.context.state(self.id())
+    }
+
+    pub fn context_mut(&mut self) -> &mut Context<'a> {
+        &mut self.context
+    }
+
+    pub fn window(&mut self) -> Option<Target<'_>> {
+        self.state()?;
+        Some(self.context.window(self.id()))
     }
 
     pub fn draw(&mut self) -> &mut Self {

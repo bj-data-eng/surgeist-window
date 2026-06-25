@@ -235,6 +235,64 @@ impl<H: Handler> WinitRunner<H> {
         Ok(action)
     }
 
+    fn call_with_event(&mut self, event: EventKind) -> Result<Action> {
+        let mut commands = Vec::new();
+        let mut actions = Vec::new();
+        let action = {
+            let context = Context::new(
+                &mut self.registry,
+                &mut commands,
+                &mut actions,
+                self.proxy.clone(),
+            );
+            let mut event = Event::new(event, context);
+            self.handler.event(&mut event)?;
+            event.context_mut().resolved_action()
+        };
+        self.commands.extend(commands);
+        Ok(action)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn call_with_event_for_test(&mut self, event: EventKind) -> Result<Action> {
+        self.call_with_event(event)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn deliver_created_then_ready_for_test(
+        &mut self,
+        state: WindowSnapshot,
+    ) -> Result<()> {
+        let id = state.id();
+        let action = self.call_with_event(EventKind::Created(state))?;
+        self.apply_action_for_test(action);
+        if self.registry.contains(id) {
+            let action = self.call_with_ready(id)?;
+            self.apply_action_for_test(action);
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn registry_contains_for_test(&self, id: Id) -> bool {
+        self.registry.contains(id)
+    }
+
+    #[cfg(test)]
+    fn apply_action_for_test(&mut self, action: Action) {
+        match action {
+            Action::CloseRequested(id) => {
+                self.close(id);
+            }
+            Action::Batch(actions) => {
+                for action in actions {
+                    self.apply_action_for_test(action);
+                }
+            }
+            other => self.draw.request(&other),
+        }
+    }
+
     fn call_with_close(&mut self, id: Id) -> Result<Action> {
         let mut commands = Vec::new();
         let mut actions = Vec::new();
@@ -313,11 +371,13 @@ impl<H: Handler> WinitRunner<H> {
 
     fn deliver_event(
         &mut self,
-        _event_loop: &winit::event_loop::ActiveEventLoop,
+        event_loop: &winit::event_loop::ActiveEventLoop,
         id: Id,
         event: EventKind,
     ) {
         debug_assert_eq!(event.id(), id);
+        let action = self.call_with_event(event);
+        self.finish_callback(event_loop, action);
     }
 
     fn apply_native_transition(
@@ -455,7 +515,9 @@ impl<H: Handler> WinitRunner<H> {
                     }
                 }
                 self.deliver_event(event_loop, id, EventKind::Created(state));
-                self.deliver_ready(event_loop, id);
+                if self.registry.contains(id) {
+                    self.deliver_ready(event_loop, id);
+                }
             }
             HostCommand::SetTitle { id, title } => {
                 let handle = self.handle(id)?;
