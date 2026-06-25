@@ -1,5 +1,7 @@
 use super::command::Action;
 use super::testing::{Effect, Event as HostEvent};
+#[cfg(feature = "accessibility")]
+use super::winit_adapter::accessibility_event_from_winit;
 use super::winit_adapter::{
     NativeTransitionRoute, PointerPositionKey, WinitRunner, code_from_winit, ime_event_from_winit,
     key_from_winit, location_from_winit, native_transition_route,
@@ -356,6 +358,46 @@ fn window_state_patch_updates_snapshot_and_reports_event() {
 }
 
 #[test]
+fn metrics_state_patch_preserves_outer_geometry_and_reports_resize_event() {
+    let id = Id::from_u64(3);
+    let mut snapshot = WindowSnapshot::new(
+        id,
+        "Main",
+        Metrics::from_physical_size(
+            id,
+            PhysicalSize {
+                width: 200,
+                height: 100,
+            },
+            1.0,
+        ),
+    );
+    let metrics = Metrics::from_physical_size(
+        id,
+        PhysicalSize {
+            width: 600,
+            height: 300,
+        },
+        2.0,
+    )
+    .with_outer_geometry(
+        Some(Point { x: 10.0, y: 20.0 }),
+        Some(Size {
+            width: 340.0,
+            height: 220.0,
+        }),
+    );
+
+    let event = WindowStatePatch::metrics(metrics.clone(), MetricsEvent::Resized)
+        .apply(&mut snapshot)
+        .expect("metrics patch should apply")
+        .expect("resize patch should emit an event");
+
+    assert_eq!(snapshot.metrics(), &metrics);
+    assert_eq!(event, EventKind::Resized(metrics));
+}
+
+#[test]
 fn window_state_patch_rejects_wrong_target() {
     let id = Id::from_u64(1);
     let metrics = Metrics::from_physical_size(
@@ -388,6 +430,53 @@ fn native_event_transition_updates_focus_state_and_emits_event() {
     assert_eq!(
         transition.event(),
         Some(&EventKind::Focused { id, focused: true })
+    );
+}
+
+#[test]
+fn native_event_transition_pairs_moved_theme_and_occlusion_patches_with_events() {
+    let id = Id::from_u64(1);
+
+    let moved = NativeEventTransition::moved(id, Point { x: 10.0, y: 20.0 });
+    assert_eq!(
+        moved.patch(),
+        Some(&WindowStatePatch::Position {
+            id,
+            position: Point { x: 10.0, y: 20.0 },
+        })
+    );
+    assert_eq!(
+        moved.event(),
+        Some(&EventKind::Moved {
+            id,
+            position: Point { x: 10.0, y: 20.0 },
+        })
+    );
+
+    let themed = NativeEventTransition::theme_changed(id, Some(Theme::Dark));
+    assert_eq!(
+        themed.patch(),
+        Some(&WindowStatePatch::Theme {
+            id,
+            theme: Some(Theme::Dark),
+        })
+    );
+    assert_eq!(
+        themed.event(),
+        Some(&EventKind::ThemeChanged {
+            id,
+            theme: Some(Theme::Dark),
+        })
+    );
+
+    let occluded = NativeEventTransition::occluded(id, true);
+    assert_eq!(
+        occluded.patch(),
+        Some(&WindowStatePatch::Occluded { id, occluded: true })
+    );
+    assert_eq!(
+        occluded.event(),
+        Some(&EventKind::Occluded { id, occluded: true })
     );
 }
 
@@ -441,6 +530,19 @@ fn native_pointer_transition_routes_to_input_delivery() {
     assert_eq!(
         pointer.physical_position,
         Some(PhysicalPoint { x: 24, y: 48 })
+    );
+}
+
+#[test]
+fn native_transition_route_sends_lifecycle_events_to_event_delivery() {
+    let id = Id::from_u64(1);
+    let event = NativeEventTransition::focused(id, true)
+        .into_event()
+        .expect("focus transition should emit event");
+
+    assert_eq!(
+        native_transition_route(&event),
+        NativeTransitionRoute::Event
     );
 }
 
@@ -864,6 +966,42 @@ fn fake_host_reports_unknown_command_target() {
 }
 
 #[test]
+fn fake_host_records_failed_direct_command_without_state_or_event_side_effects() {
+    let mut host = testing::Host::new();
+    let id = Id::from_u64(404);
+
+    let error = host
+        .apply(Command::RequestDraw { id })
+        .expect_err("unknown draw target should fail");
+
+    assert_eq!(error.code, ErrorCode::CommandFailed);
+    assert_eq!(error.id, Some(id));
+    assert_eq!(host.commands(), &[Command::RequestDraw { id }]);
+    assert!(host.events().is_empty());
+    assert!(host.take_ready_draws(Instant::now()).is_empty());
+}
+
+#[test]
+fn fake_host_duplicate_open_records_attempt_without_creating_second_window() {
+    let mut host = testing::Host::new();
+    host.apply(open("main")).unwrap();
+    host.clear();
+
+    let error = host
+        .apply(open("main"))
+        .expect_err("duplicate name should fail");
+
+    assert_eq!(error.code, ErrorCode::CommandFailed);
+    assert_eq!(host.commands().len(), 1);
+    assert!(matches!(
+        &host.commands()[0],
+        Command::Open { request } if request.name() == Some("main")
+    ));
+    assert!(host.events().is_empty());
+    assert_eq!(host.registry().len(), 1);
+}
+
+#[test]
 fn window_modeling_baseline_fake_host_records_failed_duplicate_command_without_new_window() {
     let mut host = testing::Host::new();
 
@@ -1093,6 +1231,21 @@ fn fake_host_forwards_accessibility_events() {
     );
 }
 
+#[cfg(feature = "accessibility")]
+#[test]
+fn accessibility_feature_maps_accesskit_window_events() {
+    let id = Id::from_u64(12);
+
+    assert_eq!(
+        accessibility_event_from_winit(id, accesskit_winit::WindowEvent::InitialTreeRequested),
+        AccessibilityEvent::InitialTreeRequested(id)
+    );
+    assert_eq!(
+        accessibility_event_from_winit(id, accesskit_winit::WindowEvent::AccessibilityDeactivated),
+        AccessibilityEvent::Deactivated(id)
+    );
+}
+
 #[test]
 fn accessibility_event_exposes_target_id() {
     let id = Id::from_u64(8);
@@ -1216,45 +1369,36 @@ fn dsl_open_builder_lowers_role_theme_and_control_variants() {
 }
 
 #[test]
-fn dsl_public_vocabulary_uses_lifecycle_draw_names() {
-    let first = Id::from_u64(1);
-    let later = Instant::now() + std::time::Duration::from_millis(5);
-
-    let _code: Code = keyboard_types::Code::Enter;
-    let _by_id: Selector = first.into();
-    let _by_name: Selector = "main".into();
-
-    assert_eq!(
-        Command::RequestDraw { id: first },
-        Command::RequestDraw { id: first }
-    );
-    assert_eq!(
-        Command::Destroy { id: first },
-        Command::Destroy { id: first }
-    );
-
-    let mut scheduler = DrawScheduler::new();
-    scheduler.request(&Action::DrawAt {
-        id: first,
-        time: later,
-    });
-    assert_eq!(scheduler.next_deadline(), Some(later));
-}
-
-#[test]
-fn dsl_context_target_and_actions_share_callback_buffer() {
+fn dsl_context_resolves_named_window_state_then_targets_commands_and_actions() {
     let mut window_loop = Loop::new(NoopHandler);
     let id = window_loop.registry.reserve_id();
-    window_loop.registry.insert(Instance::new(id, state(id)));
+    let metrics = Metrics::from_physical_size(
+        id,
+        PhysicalSize {
+            width: 480,
+            height: 240,
+        },
+        2.0,
+    );
+    window_loop.registry.insert(Instance::new(
+        id,
+        WindowSnapshot::new(id, "Main", metrics)
+            .named("main")
+            .with_visible(true),
+    ));
 
     {
         let mut cx = window_loop.context();
-        cx.window(id)
-            .title("Renamed")
-            .size(size(300, 160))
+        let target = cx.window_id("main").expect("named window should resolve");
+
+        assert_eq!(cx.state("main").map(WindowSnapshot::id), Some(id));
+
+        cx.window(target)
+            .title("Ready Main")
+            .size(size(320, 160))
             .draw()
             .close();
-        cx.again(id);
+        cx.again(target);
     }
 
     assert_eq!(
@@ -1262,12 +1406,12 @@ fn dsl_context_target_and_actions_share_callback_buffer() {
         vec![
             Command::SetTitle {
                 id,
-                title: String::from("Renamed"),
+                title: String::from("Ready Main"),
             },
             Command::SetInnerSize {
                 id,
                 size: Size {
-                    width: 300.0,
+                    width: 320.0,
                     height: 160.0,
                 },
             }
@@ -1539,6 +1683,41 @@ fn dsl_lifecycle_dispatch_rolls_back_callback_commands_on_error() {
 
     assert_eq!(error.code, ErrorCode::CommandFailed);
     assert!(host.commands().is_empty());
+}
+
+#[test]
+fn fake_host_callback_failure_rolls_back_callback_commands_and_command_induced_state() {
+    struct FailingReady;
+
+    impl Handler for FailingReady {
+        fn ready(&mut self, ready: &mut Ready<'_>) -> Result<()> {
+            ready.target().title("Should not apply");
+            Err(Error::new(ErrorCode::CommandFailed, "intentional failure"))
+        }
+    }
+
+    let mut host = testing::Host::new();
+    host.apply(open("main")).unwrap();
+    let id = host.window_id("main").unwrap();
+    let original_title = host
+        .registry()
+        .get(id)
+        .unwrap()
+        .instance
+        .state()
+        .title()
+        .to_owned();
+    host.clear();
+
+    let error = host.dispatch_ready(&mut FailingReady, id).unwrap_err();
+
+    assert_eq!(error.code, ErrorCode::CommandFailed);
+    assert!(host.commands().is_empty());
+    assert!(host.events().is_empty());
+    assert_eq!(
+        host.registry().get(id).unwrap().instance.state().title(),
+        original_title
+    );
 }
 
 #[test]

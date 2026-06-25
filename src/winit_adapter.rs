@@ -685,20 +685,7 @@ impl<H: Handler> winit::application::ApplicationHandler<UserEvent> for WinitRunn
             #[cfg(feature = "accessibility")]
             UserEvent::Accessibility(event) => {
                 if let Some(id) = self.id_for_winit(event.window_id) {
-                    let event = match event.window_event {
-                        accesskit_winit::WindowEvent::InitialTreeRequested => {
-                            AccessibilityEvent::InitialTreeRequested(id)
-                        }
-                        accesskit_winit::WindowEvent::ActionRequested(request) => {
-                            AccessibilityEvent::ActionRequested(AccessibilityActionRequest {
-                                id,
-                                action: format!("{:?}", request.action),
-                            })
-                        }
-                        accesskit_winit::WindowEvent::AccessibilityDeactivated => {
-                            AccessibilityEvent::Deactivated(id)
-                        }
-                    };
+                    let event = accessibility_event_from_winit(id, event.window_event);
                     self.deliver_event(event_loop, id, EventKind::Accessibility(event));
                 }
             }
@@ -1004,6 +991,27 @@ pub(crate) const fn native_transition_route(event: &EventKind) -> NativeTransiti
     match event {
         EventKind::Input(_) => NativeTransitionRoute::Input,
         _ => NativeTransitionRoute::Event,
+    }
+}
+
+#[cfg(feature = "accessibility")]
+pub(crate) fn accessibility_event_from_winit(
+    id: Id,
+    event: accesskit_winit::WindowEvent,
+) -> AccessibilityEvent {
+    match event {
+        accesskit_winit::WindowEvent::InitialTreeRequested => {
+            AccessibilityEvent::InitialTreeRequested(id)
+        }
+        accesskit_winit::WindowEvent::ActionRequested(request) => {
+            AccessibilityEvent::ActionRequested(AccessibilityActionRequest {
+                id,
+                action: format!("{:?}", request.action),
+            })
+        }
+        accesskit_winit::WindowEvent::AccessibilityDeactivated => {
+            AccessibilityEvent::Deactivated(id)
+        }
     }
 }
 
