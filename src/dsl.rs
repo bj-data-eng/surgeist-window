@@ -1361,26 +1361,44 @@ impl<H: super::Handler + 'static> App<H> {
 }
 
 impl Proxy {
+    /// Enqueue a typed window command on the native loop.
+    ///
+    /// Returns [`ErrorCode::CommandFailed`] if the event loop is closed.
     pub fn send(&self, command: impl Into<Command>) -> Result<()> {
         self.command(command.into())
     }
 
+    /// Enqueue a typed open-window command on the native loop.
+    ///
+    /// Returns [`ErrorCode::CommandFailed`] if the event loop is closed.
     pub fn open(&self, open: Open) -> Result<()> {
         self.send(open)
     }
 
+    /// Enqueue a close request for a window on the native loop.
+    ///
+    /// Returns [`ErrorCode::CommandFailed`] if the event loop is closed.
     pub fn close(&self, id: Id) -> Result<()> {
         self.request(Action::CloseRequested(id))
     }
 
+    /// Enqueue a next-frame draw request for a window on the native loop.
+    ///
+    /// Returns [`ErrorCode::CommandFailed`] if the event loop is closed.
     pub fn draw(&self, id: Id) -> Result<()> {
         self.request(Action::DrawNext(id))
     }
 
+    /// Enqueue an immediate draw request for a window on the native loop.
+    ///
+    /// Returns [`ErrorCode::CommandFailed`] if the event loop is closed.
     pub fn again(&self, id: Id) -> Result<()> {
         self.request(Action::DrawNow(id))
     }
 
+    /// Enqueue a draw request for a window at a specific instant on the native loop.
+    ///
+    /// Returns [`ErrorCode::CommandFailed`] if the event loop is closed.
     pub fn at(&self, id: Id, time: Instant) -> Result<()> {
         self.request(Action::DrawAt { id, time })
     }

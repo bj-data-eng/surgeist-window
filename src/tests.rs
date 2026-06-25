@@ -47,6 +47,28 @@ fn window_public_front_door_uses_modeled_phase_names() {
 }
 
 #[test]
+fn proxy_public_front_door_exposes_typed_cross_thread_commands() {
+    fn assert_proxy_methods(proxy: &Proxy, id: Id, time: Instant) {
+        let command = Command::SetTitle {
+            id,
+            title: String::from("Renamed"),
+        };
+
+        let _type_checked = || -> Result<()> {
+            proxy.send(command.clone())?;
+            proxy.open(open("worker-window"))?;
+            proxy.close(id)?;
+            proxy.draw(id)?;
+            proxy.again(id)?;
+            proxy.at(id, time)?;
+            proxy.exit()
+        };
+    }
+
+    let _front_door: fn(&Proxy, Id, Instant) = assert_proxy_methods;
+}
+
+#[test]
 fn metrics_convert_physical_to_logical() {
     let metrics = Metrics::from_physical_size(
         Id::from_u64(7),

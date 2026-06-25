@@ -95,7 +95,12 @@ impl raw_window_handle::HasDisplayHandle for Handle {
     }
 }
 
-/// Cross-thread event-loop wakeup handle.
+/// Cross-thread handle for sending typed window commands and event-loop actions.
+///
+/// Obtain a proxy from `Context::proxy()` inside a handler callback, clone it,
+/// and move it to another thread when external work needs to wake the window
+/// loop. Public command helpers are implemented on `Proxy` by the app-facing
+/// DSL module: `send`, `open`, `close`, `draw`, `again`, `at`, and `exit`.
 #[derive(Clone, Debug)]
 pub struct Proxy {
     pub(crate) inner: winit::event_loop::EventLoopProxy<UserEvent>,
@@ -110,6 +115,9 @@ impl Proxy {
         self.send_user_event(UserEvent::Action(action))
     }
 
+    /// Enqueue an event-loop exit action on the native loop.
+    ///
+    /// Returns [`ErrorCode::CommandFailed`] if the event loop is closed.
     pub fn exit(&self) -> Result<()> {
         self.send_user_event(UserEvent::Action(Action::Exit))
     }
