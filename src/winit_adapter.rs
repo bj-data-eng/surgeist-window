@@ -466,10 +466,10 @@ impl<H: Handler> WinitRunner<H> {
     fn apply_host_command(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
-        command: HostCommand,
+        command: Command,
     ) -> Result<()> {
         match command {
-            HostCommand::Open { request } => {
+            Command::Open { request } => {
                 validate_name(&self.registry, request.name())?;
                 #[cfg(feature = "accessibility")]
                 let requested_visible = request.visible();
@@ -521,17 +521,17 @@ impl<H: Handler> WinitRunner<H> {
                     self.deliver_ready(event_loop, id);
                 }
             }
-            HostCommand::SetTitle { id, title } => {
+            Command::SetTitle { id, title } => {
                 let handle = self.handle(id)?;
                 handle.winit().set_title(&title);
                 self.apply_patch(WindowStatePatch::title(id, title))?;
             }
-            HostCommand::SetPosition { id, position } => {
+            Command::SetPosition { id, position } => {
                 self.handle(id)?
                     .winit()
                     .set_outer_position(winit::dpi::LogicalPosition::new(position.x, position.y));
             }
-            HostCommand::SetVisible { id, visible } => {
+            Command::SetVisible { id, visible } => {
                 let handle = self.handle(id)?;
                 handle.winit().set_visible(visible);
                 self.apply_patch(WindowStatePatch::visible(id, visible))?;
@@ -539,37 +539,37 @@ impl<H: Handler> WinitRunner<H> {
                     self.request_pending_draws();
                 }
             }
-            HostCommand::SetResizable { id, resizable } => {
+            Command::SetResizable { id, resizable } => {
                 self.handle(id)?.winit().set_resizable(resizable);
             }
-            HostCommand::SetControls { id, controls } => {
+            Command::SetControls { id, controls } => {
                 self.handle(id)?
                     .winit()
                     .set_enabled_buttons(controls.into());
             }
-            HostCommand::SetDecorations { id, decorations } => {
+            Command::SetDecorations { id, decorations } => {
                 self.handle(id)?.winit().set_decorations(decorations);
             }
-            HostCommand::SetTransparent { id, transparent } => {
+            Command::SetTransparent { id, transparent } => {
                 self.handle(id)?.winit().set_transparent(transparent);
             }
-            HostCommand::SetInnerSize { id, size } => {
+            Command::SetInnerSize { id, size } => {
                 let _ = self
                     .handle(id)?
                     .winit()
                     .request_inner_size(winit::dpi::LogicalSize::new(size.width, size.height));
             }
-            HostCommand::SetMinInnerSize { id, size } => {
+            Command::SetMinInnerSize { id, size } => {
                 self.handle(id)?.winit().set_min_inner_size(
                     size.map(|size| winit::dpi::LogicalSize::new(size.width, size.height)),
                 );
             }
-            HostCommand::SetMaxInnerSize { id, size } => {
+            Command::SetMaxInnerSize { id, size } => {
                 self.handle(id)?.winit().set_max_inner_size(
                     size.map(|size| winit::dpi::LogicalSize::new(size.width, size.height)),
                 );
             }
-            HostCommand::SetFullscreen { id, fullscreen } => {
+            Command::SetFullscreen { id, fullscreen } => {
                 let fullscreen = match fullscreen {
                     Fullscreen::None => None,
                     Fullscreen::Borderless => Some(winit::window::Fullscreen::Borderless(None)),
@@ -584,16 +584,16 @@ impl<H: Handler> WinitRunner<H> {
                     fullscreen: is_fullscreen,
                 })?;
             }
-            HostCommand::SetLevel { id, level } => {
+            Command::SetLevel { id, level } => {
                 self.handle(id)?.winit().set_window_level(level.into());
             }
-            HostCommand::SetTheme { id, theme } => {
+            Command::SetTheme { id, theme } => {
                 self.handle(id)?.winit().set_theme(theme.map(Into::into));
                 if let Some(event) = self.apply_patch(WindowStatePatch::Theme { id, theme })? {
                     self.deliver_event(event_loop, id, event);
                 }
             }
-            HostCommand::SetCursor { id, cursor } => {
+            Command::SetCursor { id, cursor } => {
                 if self.cursor_state.get(&id) == Some(&cursor) {
                     return Ok(());
                 }
@@ -613,7 +613,7 @@ impl<H: Handler> WinitRunner<H> {
                     }
                 }
             }
-            HostCommand::SetCursorGrab { id, grab } => {
+            Command::SetCursorGrab { id, grab } => {
                 let mode = match grab {
                     CursorGrab::None => winit::window::CursorGrabMode::None,
                     CursorGrab::Confined => winit::window::CursorGrabMode::Confined,
@@ -628,19 +628,19 @@ impl<H: Handler> WinitRunner<H> {
                             .with_source(source)
                     })?;
             }
-            HostCommand::SetIme { id, request } => {
+            Command::SetIme { id, request } => {
                 self.apply_ime(id, request)?;
             }
-            HostCommand::RequestUserAttention { id } => {
+            Command::RequestUserAttention { id } => {
                 self.handle(id)?
                     .winit()
                     .request_user_attention(Some(winit::window::UserAttentionType::Informational));
             }
-            HostCommand::RequestDraw { id } => {
+            Command::RequestDraw { id } => {
                 self.pending_draws.insert(id);
                 self.handle(id)?.request_draw();
             }
-            HostCommand::Destroy { id } => {
+            Command::Destroy { id } => {
                 if let Some(state) = self.close(id) {
                     self.deliver_closed(event_loop, state);
                 }

@@ -429,39 +429,37 @@ impl Host {
 
     fn apply_plan(&mut self, plan: HostCommandPlan) -> Result<()> {
         match plan.into_command() {
-            HostCommand::Open { request } => self.apply_open_request(request),
-            HostCommand::SetTitle { id, title } => {
-                self.apply_patch(WindowStatePatch::title(id, title))
-            }
-            HostCommand::SetPosition { id, position } => {
+            Command::Open { request } => self.apply_open_request(request),
+            Command::SetTitle { id, title } => self.apply_patch(WindowStatePatch::title(id, title)),
+            Command::SetPosition { id, position } => {
                 self.apply_patch(WindowStatePatch::Position { id, position })
             }
-            HostCommand::SetVisible { id, visible } => {
+            Command::SetVisible { id, visible } => {
                 self.apply_patch(WindowStatePatch::visible(id, visible))
             }
-            HostCommand::SetInnerSize { id, size } => self.apply_inner_size(id, size),
-            HostCommand::SetFullscreen { id, fullscreen } => {
+            Command::SetInnerSize { id, size } => self.apply_inner_size(id, size),
+            Command::SetFullscreen { id, fullscreen } => {
                 self.apply_patch(WindowStatePatch::Fullscreen {
                     id,
                     fullscreen: !matches!(fullscreen, Fullscreen::None),
                 })
             }
-            HostCommand::SetTheme { id, theme } => {
+            Command::SetTheme { id, theme } => {
                 self.apply_patch(WindowStatePatch::Theme { id, theme })
             }
-            HostCommand::SetCursor { id, cursor } => self.apply_cursor(id, cursor),
-            HostCommand::SetIme { id, request } => self.apply_ime_request(id, request),
-            HostCommand::RequestDraw { id } => self.apply_draw_request(id),
-            HostCommand::Destroy { id } => self.apply_destroy(id),
-            HostCommand::SetResizable { id, .. }
-            | HostCommand::SetControls { id, .. }
-            | HostCommand::SetDecorations { id, .. }
-            | HostCommand::SetTransparent { id, .. }
-            | HostCommand::SetMinInnerSize { id, .. }
-            | HostCommand::SetMaxInnerSize { id, .. }
-            | HostCommand::SetLevel { id, .. }
-            | HostCommand::SetCursorGrab { id, .. }
-            | HostCommand::RequestUserAttention { id } => self.require_window(id),
+            Command::SetCursor { id, cursor } => self.apply_cursor(id, cursor),
+            Command::SetIme { id, request } => self.apply_ime_request(id, request),
+            Command::RequestDraw { id } => self.apply_draw_request(id),
+            Command::Destroy { id } => self.apply_destroy(id),
+            Command::SetResizable { id, .. }
+            | Command::SetControls { id, .. }
+            | Command::SetDecorations { id, .. }
+            | Command::SetTransparent { id, .. }
+            | Command::SetMinInnerSize { id, .. }
+            | Command::SetMaxInnerSize { id, .. }
+            | Command::SetLevel { id, .. }
+            | Command::SetCursorGrab { id, .. }
+            | Command::RequestUserAttention { id } => self.require_window(id),
         }
     }
 

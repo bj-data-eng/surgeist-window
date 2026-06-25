@@ -42,7 +42,6 @@ fn window_public_front_door_uses_modeled_phase_names() {
     let _ = std::mem::size_of::<WindowSnapshot>();
     let _ = std::mem::size_of::<HostCapabilities>();
     let _ = std::mem::size_of::<HostCommandPlan>();
-    let _ = std::mem::size_of::<HostCommand>();
     let _ = std::mem::size_of::<WindowStatePatch>();
     let _ = std::mem::size_of::<NativeEventTransition>();
 }
@@ -958,77 +957,76 @@ fn host_capabilities_explain_rejections_with_stable_codes() {
 }
 
 #[test]
-fn host_command_plan_rejects_unsupported_dialog_role_before_host_application() {
-    let capabilities = HostCapabilities::winit_default();
-    let request = WindowRequest::builder("dialog")
-        .title("Dialog")
-        .dialog(Id::from_u64(1))
-        .build();
-    let command = Command::Open { request };
-
-    let error = HostCommandPlan::from_command(command, &capabilities)
-        .expect_err("dialog role is not supported by current host capabilities");
-
-    assert_eq!(error.code, ErrorCode::UnsupportedFeature);
-}
-
-#[test]
-fn host_command_plan_rejects_exclusive_fullscreen_open_before_host_application() {
-    let capabilities = HostCapabilities::winit_default();
-    let request = WindowRequest::builder("exclusive")
-        .fullscreen(Fullscreen::Exclusive)
-        .build();
-    let command = Command::Open { request };
-
-    let error = HostCommandPlan::from_command(command, &capabilities)
-        .expect_err("exclusive fullscreen opens are not supported by current host capabilities");
-
-    assert_eq!(error.code, ErrorCode::UnsupportedFeature);
-}
-
-#[test]
-fn host_command_plan_rejects_exclusive_fullscreen_command_before_host_application() {
-    let capabilities = HostCapabilities::winit_default();
-    let command = Command::SetFullscreen {
-        id: Id::from_u64(1),
-        fullscreen: Fullscreen::Exclusive,
-    };
-
-    let error = HostCommandPlan::from_command(command, &capabilities)
-        .expect_err("exclusive fullscreen commands are not supported by current host capabilities");
-
-    assert_eq!(error.code, ErrorCode::UnsupportedFeature);
-}
-
-#[test]
-fn host_command_plan_rejects_custom_cursor_before_host_application() {
-    let capabilities = HostCapabilities::winit_default();
-    let command = Command::SetCursor {
-        id: Id::from_u64(1),
-        cursor: Cursor::Custom(CustomCursorId::from_u64(9)),
-    };
-
-    let error = HostCommandPlan::from_command(command, &capabilities)
-        .expect_err("custom cursors are not supported by current host capabilities");
-
-    assert_eq!(error.code, ErrorCode::UnsupportedFeature);
-}
-
-#[test]
-fn host_command_plan_keeps_supported_commands_as_normalized_host_commands() {
+fn host_command_plan_returns_validated_command_without_duplicate_host_enum() {
     let capabilities = HostCapabilities::winit_default();
     let command = Command::SetTitle {
         id: Id::from_u64(1),
         title: String::from("Renamed"),
     };
+    let expected = command.clone();
 
     let plan = HostCommandPlan::from_command(command, &capabilities).unwrap();
 
-    assert!(matches!(
-        plan.command(),
-        HostCommand::SetTitle { id, title }
-            if *id == Id::from_u64(1) && title == "Renamed"
-    ));
+    assert_eq!(plan.command(), &expected);
+    assert_eq!(plan.into_command(), expected);
+}
+
+#[test]
+fn host_command_plan_keeps_backend_capability_rejections_before_application() {
+    let capabilities = HostCapabilities::winit_default();
+    let dialog = Command::Open {
+        request: WindowRequest::builder("dialog")
+            .title("Dialog")
+            .dialog(Id::from_u64(1))
+            .build(),
+    };
+    let exclusive_open = Command::Open {
+        request: WindowRequest::builder("exclusive")
+            .fullscreen(Fullscreen::Exclusive)
+            .build(),
+    };
+    let exclusive_command = Command::SetFullscreen {
+        id: Id::from_u64(1),
+        fullscreen: Fullscreen::Exclusive,
+    };
+    let custom_cursor = Command::SetCursor {
+        id: Id::from_u64(1),
+        cursor: Cursor::Custom(CustomCursorId::from_u64(9)),
+    };
+
+    for command in [dialog, exclusive_open, exclusive_command, custom_cursor] {
+        let error = HostCommandPlan::from_command(command, &capabilities)
+            .expect_err("unsupported backend capability should be rejected during planning");
+
+        assert_eq!(error.code, ErrorCode::UnsupportedFeature);
+    }
+}
+
+#[test]
+fn host_command_enum_is_not_part_of_public_front_door() {
+    let lib = include_str!("lib.rs");
+    let duplicate_name = ["Host", "Command"].concat();
+    let transition_export = "pub use transition::{";
+
+    let export_start = lib
+        .find(transition_export)
+        .expect("transition front-door export should exist");
+    let export_end = lib[export_start..]
+        .find("};")
+        .map(|offset| export_start + offset)
+        .expect("transition front-door export should end");
+    let export = &lib[export_start..export_end];
+
+    let exported_items = export
+        .trim_start_matches(transition_export)
+        .split(',')
+        .map(str::trim);
+
+    assert!(
+        exported_items
+            .into_iter()
+            .all(|item| item != duplicate_name)
+    );
 }
 
 #[test]

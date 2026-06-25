@@ -57,9 +57,7 @@ pub use geometry::{Id, Insets, PhysicalPoint, PhysicalSize, Point, Rect, Size};
 pub use handler::Handler;
 pub use loop_::Loop;
 pub use registry::{Access, Handle, Instance, Proxy, Ref, Registry};
-pub use transition::{
-    HostCommand, HostCommandPlan, MetricsEvent, NativeEventTransition, WindowStatePatch,
-};
+pub use transition::{HostCommandPlan, MetricsEvent, NativeEventTransition, WindowStatePatch};
 
 pub(crate) use registry::UserEvent;
 pub(crate) use scheduler::DrawScheduler;
