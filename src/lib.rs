@@ -30,6 +30,7 @@ mod scheduler;
 pub mod testing;
 mod transition;
 mod winit_adapter;
+mod winit_mapping;
 
 pub use accessibility::{AccessibilityActionRequest, AccessibilityBridge, AccessibilityEvent};
 pub use capability::{CursorCapability, FullscreenMode, HostCapabilities, RoleKind};
@@ -61,7 +62,7 @@ pub use transition::{
 };
 
 pub(crate) use registry::UserEvent;
-pub(crate) use scheduler::{DrawScheduler, native_control_flow};
+pub(crate) use scheduler::DrawScheduler;
 
 #[cfg(test)]
 mod tests;

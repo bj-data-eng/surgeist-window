@@ -1,6 +1,6 @@
 use super::{
     command::Action, context::resolve_actions_with, descriptor::WindowSnapshotSeed,
-    event::EventKind, *,
+    event::EventKind, winit_mapping, *,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -160,7 +160,7 @@ impl<H: Handler> WinitRunner<H> {
         {
             return winit::event_loop::ControlFlow::WaitUntil(Instant::now() + REDRAW_RETRY);
         }
-        native_control_flow(self.draw.control_flow())
+        winit_mapping::control_flow_from_draw_scheduler(&self.draw)
     }
 
     fn call_with_context(
@@ -483,7 +483,9 @@ impl<H: Handler> WinitRunner<H> {
                 let native_request = request.clone();
                 let window = Arc::new(
                     event_loop
-                        .create_window(native_request.to_winit_attributes()?)
+                        .create_window(winit_mapping::window_attributes_from_request(
+                            &native_request,
+                        )?)
                         .map_err(|source| {
                             Error::new(ErrorCode::WindowCreateFailed, "failed to create window")
                                 .with_source(source)

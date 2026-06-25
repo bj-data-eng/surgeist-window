@@ -1,7 +1,8 @@
 use super::winit_adapter::WinitRunner;
+use super::winit_mapping;
 use super::{
     Clipboard, Command, DrawScheduler, Error, ErrorCode, Handler, MemoryClipboard, Proxy, Registry,
-    Result, UserEvent, native_control_flow,
+    Result, UserEvent,
 };
 #[cfg(test)]
 use super::{Context, command::Action};
@@ -85,7 +86,9 @@ impl<H: Handler + 'static> Loop<H> {
         };
         let mut runner = WinitRunner::from_loop(self);
         runner.proxy = Some(proxy);
-        event_loop.set_control_flow(native_control_flow(winit::event_loop::ControlFlow::Wait));
+        event_loop.set_control_flow(winit_mapping::native_control_flow(
+            winit::event_loop::ControlFlow::Wait,
+        ));
         event_loop.run_app(&mut runner).map_err(|source| {
             Error::new(ErrorCode::UnknownNativeError, "native event loop failed")
                 .with_source(source)

@@ -1,4 +1,4 @@
-use super::{Error, ErrorCode, Id, Insets, PhysicalPoint, PhysicalSize, Point, Result, Size};
+use super::{Id, Insets, PhysicalPoint, PhysicalSize, Point, Size};
 use crate::{FullscreenMode, RoleKind};
 
 /// Native fullscreen intent.
@@ -238,62 +238,6 @@ impl WindowRequest {
     pub(crate) const fn set_max_inner_size(&mut self, size: Option<Size>) {
         self.max_inner_size = size;
     }
-
-    /// Convert this stable window request into `winit` window attributes.
-    ///
-    /// This is intentionally explicit rather than a blanket `From` impl because
-    /// some Surgeist intents may need diagnostics when a native backend cannot
-    /// express them.
-    pub(crate) fn to_winit_attributes(&self) -> Result<winit::window::WindowAttributes> {
-        if !matches!(self.role, Role::Root) {
-            return Err(Error::new(
-                ErrorCode::UnsupportedFeature,
-                "native window roles require parent and modality wiring",
-            ));
-        }
-
-        let mut attributes = winit::window::Window::default_attributes()
-            .with_title(self.title.clone())
-            .with_resizable(self.resizable)
-            .with_enabled_buttons(self.controls.into())
-            .with_decorations(self.decorations)
-            .with_transparent(self.transparent)
-            .with_visible(self.visible)
-            .with_window_level(self.level.into())
-            .with_theme(self.theme.map(Into::into));
-
-        if let Some(position) = self.position {
-            attributes =
-                attributes.with_position(winit::dpi::LogicalPosition::new(position.x, position.y));
-        }
-        if let Some(size) = self.inner_size {
-            attributes =
-                attributes.with_inner_size(winit::dpi::LogicalSize::new(size.width, size.height));
-        }
-        if let Some(size) = self.min_inner_size {
-            attributes = attributes
-                .with_min_inner_size(winit::dpi::LogicalSize::new(size.width, size.height));
-        }
-        if let Some(size) = self.max_inner_size {
-            attributes = attributes
-                .with_max_inner_size(winit::dpi::LogicalSize::new(size.width, size.height));
-        }
-
-        attributes = match self.fullscreen {
-            Fullscreen::None => attributes.with_fullscreen(None),
-            Fullscreen::Borderless => {
-                attributes.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)))
-            }
-            Fullscreen::Exclusive => {
-                return Err(Error::new(
-                    ErrorCode::CommandFailed,
-                    "exclusive fullscreen requires a native video mode",
-                ));
-            }
-        };
-
-        Ok(attributes)
-    }
 }
 
 impl WindowRequestBuilder {
@@ -434,41 +378,6 @@ impl WindowRequestBuilder {
     #[must_use]
     pub const fn popup(self, parent: Id) -> Self {
         self.role(Role::Popup { parent })
-    }
-}
-
-impl From<Controls> for winit::window::WindowButtons {
-    fn from(controls: Controls) -> Self {
-        let mut buttons = Self::empty();
-        if controls.close {
-            buttons |= Self::CLOSE;
-        }
-        if controls.minimize {
-            buttons |= Self::MINIMIZE;
-        }
-        if controls.maximize {
-            buttons |= Self::MAXIMIZE;
-        }
-        buttons
-    }
-}
-
-impl From<Level> for winit::window::WindowLevel {
-    fn from(level: Level) -> Self {
-        match level {
-            Level::Normal => Self::Normal,
-            Level::AlwaysOnTop => Self::AlwaysOnTop,
-            Level::AlwaysOnBottom => Self::AlwaysOnBottom,
-        }
-    }
-}
-
-impl From<Theme> for winit::window::Theme {
-    fn from(theme: Theme) -> Self {
-        match theme {
-            Theme::Light => Self::Light,
-            Theme::Dark => Self::Dark,
-        }
     }
 }
 

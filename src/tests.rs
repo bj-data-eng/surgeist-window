@@ -167,22 +167,18 @@ fn delayed_draw_waits_until_deadline() {
 }
 
 #[test]
-fn delayed_draw_sets_event_loop_deadline() {
+fn draw_scheduler_exposes_backend_neutral_deadline() {
     let id = Id::from_u64(1);
     let deadline = Instant::now() + std::time::Duration::from_millis(20);
     let mut scheduler = DrawScheduler::new();
 
-    assert_eq!(
-        scheduler.control_flow(),
-        winit::event_loop::ControlFlow::Wait
-    );
+    assert_eq!(scheduler.next_deadline(), None);
+    assert_eq!(scheduler.take_ready(Instant::now()), Vec::<Id>::new());
 
     scheduler.request(&Action::DrawAt { id, time: deadline });
 
-    assert_eq!(
-        scheduler.control_flow(),
-        winit::event_loop::ControlFlow::WaitUntil(deadline)
-    );
+    assert_eq!(scheduler.next_deadline(), Some(deadline));
+    assert_eq!(scheduler.take_ready(deadline), vec![id]);
 }
 
 #[test]
@@ -806,7 +802,7 @@ fn specialized_resize_input_close_callbacks_do_not_double_deliver_generic_event(
 }
 
 #[test]
-fn window_request_converts_to_winit_attributes() {
+fn winit_mapping_converts_window_request_to_native_attributes() {
     let request = WindowRequest::builder("surgeist-window")
         .title("Window")
         .position(Point { x: 12.0, y: 24.0 })
@@ -837,7 +833,7 @@ fn window_request_converts_to_winit_attributes() {
         .root()
         .build();
 
-    let attributes = request.to_winit_attributes().unwrap();
+    let attributes = super::winit_mapping::window_attributes_from_request(&request).unwrap();
 
     assert_eq!(attributes.title, "Window");
     assert_eq!(
@@ -889,7 +885,7 @@ fn exclusive_fullscreen_requires_native_video_mode() {
         .fullscreen(Fullscreen::Exclusive)
         .build();
 
-    let error = request.to_winit_attributes().unwrap_err();
+    let error = super::winit_mapping::window_attributes_from_request(&request).unwrap_err();
 
     assert_eq!(error.code, ErrorCode::CommandFailed);
 }
@@ -900,7 +896,7 @@ fn native_window_request_rejects_unimplemented_roles() {
         .dialog(Id::from_u64(1))
         .build();
 
-    let error = request.to_winit_attributes().unwrap_err();
+    let error = super::winit_mapping::window_attributes_from_request(&request).unwrap_err();
 
     assert_eq!(error.code, ErrorCode::UnsupportedFeature);
     assert!(error.message.contains("roles"));
@@ -912,8 +908,7 @@ fn window_modeling_baseline_request_rejects_non_root_roles_for_winit_attributes(
         .dialog(Id::from_u64(1))
         .build();
 
-    let error = request
-        .to_winit_attributes()
+    let error = super::winit_mapping::window_attributes_from_request(&request)
         .expect_err("role support is not modeled yet");
 
     assert_eq!(error.code, ErrorCode::UnsupportedFeature);
@@ -925,8 +920,7 @@ fn window_modeling_baseline_request_rejects_exclusive_fullscreen_for_winit_attri
         .fullscreen(Fullscreen::Exclusive)
         .build();
 
-    let error = request
-        .to_winit_attributes()
+    let error = super::winit_mapping::window_attributes_from_request(&request)
         .expect_err("exclusive fullscreen requires a native video mode");
 
     assert_eq!(error.code, ErrorCode::CommandFailed);

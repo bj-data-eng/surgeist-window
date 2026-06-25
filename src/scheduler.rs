@@ -63,27 +63,4 @@ impl DrawScheduler {
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
         self.delayed.values().copied().min()
     }
-
-    #[must_use]
-    pub(crate) fn control_flow(&self) -> winit::event_loop::ControlFlow {
-        self.next_deadline().map_or(
-            winit::event_loop::ControlFlow::Wait,
-            winit::event_loop::ControlFlow::WaitUntil,
-        )
-    }
-}
-
-pub(crate) fn native_control_flow(
-    control_flow: winit::event_loop::ControlFlow,
-) -> winit::event_loop::ControlFlow {
-    #[cfg(target_os = "macos")]
-    {
-        if matches!(control_flow, winit::event_loop::ControlFlow::Wait) {
-            return winit::event_loop::ControlFlow::WaitUntil(
-                Instant::now() + std::time::Duration::from_secs(60 * 60),
-            );
-        }
-    }
-
-    control_flow
 }
